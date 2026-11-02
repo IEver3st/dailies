@@ -1,11 +1,12 @@
 import { app, BrowserWindow, Tray, Menu, Notification, dialog, ipcMain, nativeImage, shell } from "electron";
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync, openSync, mkdirSync, rmSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { createUpdater, type UpdateState } from "./updater";
 
-type DaemonInfo = { port: number; token: string; pid?: number };
+type DaemonInfo = { port: number; token: string; pid?: number; root?: string };
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const APP_DIR = join(process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"), "Dailies");
@@ -22,6 +23,22 @@ let tray: Tray | undefined;
 let quitting = false;
 let daemon: DaemonInfo | undefined;
 let pendingNav: string | undefined;
+
+const updater = createUpdater({
+  root: ROOT,
+  appDir: APP_DIR,
+  bun: bunPath,
+  icon: join(RESOURCES, "icon.png"),
+  windowVisible: () => !!win?.isVisible(),
+  beforeRestart: () => {
+    quitting = true;
+  },
+  onChange: (state) => {
+    refreshTray?.();
+    win?.webContents.send("dailies:update", state);
+  },
+});
+let refreshTray: (() => void) | undefined;
 
 function registerShortcut() {
   const link = join(START_MENU, "Dailies.lnk");
@@ -68,7 +85,7 @@ if (process.argv.includes("--register")) {
 function readDaemonFile(): DaemonInfo | undefined {
   try {
     const j = JSON.parse(readFileSync(DAEMON_FILE, "utf8"));
-    return j.port && j.token ? { port: j.port, token: j.token, pid: j.pid } : undefined;
+    return j.port && j.token ? { port: j.port, token: j.token, pid: j.pid, root: j.root } : undefined;
   } catch {
     return undefined;
   }
@@ -90,9 +107,23 @@ function bunPath() {
   return candidates.find((p): p is string => !!p && existsSync(p)) ?? "bun";
 }
 
+const RELEASED = existsSync(join(ROOT, "release.json"));
+const samePath = (a?: string, b?: string) => !!a && !!b && resolve(a).toLowerCase() === resolve(b).toLowerCase();
+
+async function retire(info: DaemonInfo) {
+  try {
+    if (info.pid) process.kill(info.pid);
+  } catch {}
+  const until = Date.now() + 8000;
+  while (Date.now() < until && (await healthy(info))) await new Promise((r) => setTimeout(r, 200));
+}
+
 async function ensureDaemon(): Promise<DaemonInfo> {
   const current = readDaemonFile();
-  if (await healthy(current)) return current!;
+  if (await healthy(current)) {
+    if (!RELEASED || samePath(current!.root, ROOT)) return current!;
+    await retire(current!);
+  }
   mkdirSync(APP_DIR, { recursive: true });
   const log = openSync(join(APP_DIR, "daemon.log"), "a");
   const child = spawn(bunPath(), [join(ROOT, "daemon", "main.ts"), "--parent-pid", String(process.pid), "--ui", join(ROOT, "out", "renderer")], {
@@ -144,6 +175,7 @@ function createWindow() {
     if (!quitting) {
       e.preventDefault();
       win?.hide();
+      updater.windowHidden();
     }
   });
   win.once("ready-to-show", () => {
@@ -169,6 +201,17 @@ function loginEnabled() {
   return app.getLoginItemSettings({ args: ["--background"] }).openAtLogin;
 }
 
+function updateItems(u: UpdateState): Electron.MenuItemConstructorOptions[] {
+  if (!u.enabled) return [{ label: "Development build", enabled: false }, { type: "separator" }];
+  const items: Electron.MenuItemConstructorOptions[] = [{ label: `Version ${u.running!.short}: ${u.running!.subject.slice(0, 48)}`, enabled: false }];
+  if (u.ready) items.push({ label: `Restart to update to ${u.ready.short}`, click: () => updater.apply() });
+  else items.push({ label: u.checking ? "Checking for updates..." : "Check for updates", enabled: !u.checking, click: () => void updater.check() });
+  if (u.failure) items.push({ label: `Update ${u.failure.short} failed at ${u.failure.step}: open log`, click: () => void shell.openPath(updater.logFile) });
+  if (u.previous && !u.ready) items.push({ label: `Roll back to ${u.previous.short}`, click: () => void updater.rollback() });
+  items.push({ type: "separator" });
+  return items;
+}
+
 function buildTray() {
   const image = nativeImage.createFromPath(join(RESOURCES, "tray.png"));
   tray = new Tray(image);
@@ -178,6 +221,7 @@ function buildTray() {
       Menu.buildFromTemplate([
         { label: "Open Dailies", click: () => showWindow() },
         { type: "separator" },
+        ...updateItems(updater.state()),
         {
           label: "Start with Windows",
           type: "checkbox",
@@ -198,6 +242,7 @@ function buildTray() {
         },
       ]),
     );
+  refreshTray = refresh;
   refresh();
   tray.on("click", () => showWindow());
 }
@@ -253,6 +298,8 @@ ipcMain.handle("dailies:connection", async () => {
   if (!daemon || !(await healthy(daemon))) daemon = await ensureDaemon();
   return { base: `http://127.0.0.1:${daemon.port}`, token: daemon.token };
 });
+ipcMain.handle("dailies:updateState", () => updater.state());
+ipcMain.handle("dailies:applyUpdate", () => updater.apply());
 ipcMain.handle("dailies:takeNavigation", () => {
   const nav = pendingNav;
   pendingNav = undefined;
@@ -283,4 +330,5 @@ void app.whenReady().then(async () => {
   }
   createWindow();
   void watchEvents();
+  updater.start();
 });

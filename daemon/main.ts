@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 import { Registry, configureRender } from "./cuts";
 import { Renderer, ensureShim } from "./render";
@@ -55,7 +55,7 @@ if (!server) {
   console.error("[dailies] no free port");
   process.exit(1);
 }
-writeJsonAtomic(DAEMON_FILE, { port: server.port, token, pid: process.pid, startedAt, version: VERSION });
+writeJsonAtomic(DAEMON_FILE, { port: server.port, token, pid: process.pid, startedAt, version: VERSION, root: resolve(daemonDir, "..") });
 console.log(`[dailies] daemon ${VERSION} on http://127.0.0.1:${server.port} (tsrct ${cliV}, encoder ${encoder}, ui ${uiDir() ?? "not built yet"})`);
 
 void Promise.all(

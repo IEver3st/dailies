@@ -5,6 +5,7 @@ import { useActivity, useCuts } from "@/lib/store";
 import { ago, cn, plural, tc } from "@/lib/format";
 import { Button, IconButton, Tip } from "./ui/button";
 import { Mark } from "./Mark";
+import { UpdatePill } from "./UpdatePill";
 
 export type OpenTarget = {
   cutId: string;
@@ -635,6 +636,7 @@ export function Library({ onOpen }: { onOpen: (t: OpenTarget) => void }) {
       <header className="drag flex h-12 shrink-0 items-center gap-3 pr-[150px] pl-5">
         <Mark />
         <span className="font-semibold">Dailies</span>
+        <UpdatePill />
         <div className="flex-1" />
         <label className="no-drag flex h-[34px] w-[320px] items-center gap-2 rounded-[9px] bg-panel px-3 text-faint focus-within:text-soft focus-within:ring-2 focus-within:ring-amber/60">
           <Search className="size-[15px] shrink-0" />

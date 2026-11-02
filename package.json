@@ -4,6 +4,10 @@
   "version": "0.1.0",
   "private": true,
   "description": "Review room for agent-made Tesseract videos",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/IEver3st/dailies.git"
+  },
   "main": "out/main/index.js",
   "type": "module",
   "scripts": {
@@ -12,8 +16,11 @@
     "start": "electron-vite preview",
     "daemon": "bun daemon/main.ts",
     "mcp": "bun mcp/server.ts",
-    "install:windows": "bun run build && bun scripts/install-windows.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "install:windows": "bun scripts/install-windows.ts",
+    "typecheck": "tsc -p tsconfig.daemon.json --noEmit && tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit",
+    "deploy": "bun scripts/release.ts update",
+    "deploy:status": "bun scripts/release.ts status",
+    "deploy:rollback": "bun scripts/release.ts rollback"
   },
   "dependencies": {
     "@fontsource-variable/familjen-grotesk": "^5.3.0",
