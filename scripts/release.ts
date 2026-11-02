@@ -30,6 +30,7 @@ const STATE = join(RELEASES, "state.json");
 const LOCK = join(RELEASES, ".lock");
 const LOG = join(APP_DIR, "updates.log");
 const SHELL_VERSION = join(process.env.LOCALAPPDATA ?? "", "Programs", "Dailies", "version");
+const MCP_ENTRY = join(APP_DIR, "mcp.mjs");
 const KEEP = 3;
 
 const quiet = { ...process.env, GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never", ELECTRON_SKIP_BINARY_DOWNLOAD: "1", ELECTRON_RUN_AS_NODE: undefined, CI: "1" };
@@ -67,10 +68,11 @@ function bun() {
 }
 
 function run(step: string, cmd: string[], cwd: string, env: Record<string, string | undefined> = quiet) {
-  log(`$ ${cmd.join(" ")}  (${cwd})`);
+  const routine = ["clone", "fetch", "resolve"].includes(step);
   const p = Bun.spawnSync(cmd, { cwd, env, stdout: "pipe", stderr: "pipe", windowsHide: true });
   const out = `${p.stdout.toString()}${p.stderr.toString()}`.trim();
-  if (out) log(out);
+  if (!routine || p.exitCode !== 0) log(`$ ${cmd.join(" ")}  (${cwd})${out ? `
+${out}` : ""}`);
   if (p.exitCode !== 0) throw new StepError(step, out.split("\n").slice(-12).join("\n") || `${cmd[0]} exited ${p.exitCode}`);
   return p.stdout.toString().trim();
 }
@@ -182,9 +184,21 @@ function build(commit: ReturnType<typeof sync>): Release {
   return release;
 }
 
+function writeMcpEntry() {
+  const entry = `import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+
+const current = JSON.parse(readFileSync(join(import.meta.dirname, "releases", "current.json"), "utf8"));
+await import(pathToFileURL(join(current.dir, "mcp", "server.ts")).href);
+`;
+  if (readFileSync(MCP_ENTRY, { flag: "a+" }).toString() !== entry) writeFileSync(MCP_ENTRY, entry);
+}
+
 function activate(release: Release) {
   const old = readCurrent();
   writeJson(CURRENT, { ...release, previous: old && old.dir !== release.dir ? old.dir : old?.previous });
+  writeMcpEntry();
   log(`activated ${release.short} ${release.subject}`);
 }
 
@@ -221,7 +235,10 @@ export function update(opts: { ref?: string; force?: boolean } = {}): Result {
     const commit = sync(opts.ref ?? "main");
     sha = commit.sha;
     const current = readCurrent();
-    if (!opts.force && current?.sha === sha) return { status: "current", release: current };
+    if (!opts.force && current?.sha === sha) {
+      writeMcpEntry();
+      return { status: "current", release: current };
+    }
     if (!opts.force && state.skipped.includes(sha)) return { status: "skipped", sha, reason: "rolled back" };
     const failed = state.failed[sha];
     if (!opts.force && failed) return { status: "failed", sha, step: failed.step, error: failed.error };
