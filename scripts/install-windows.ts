@@ -158,7 +158,10 @@ const current = readCurrent();
 console.log(`Installed Dailies (Electron ${electronVersion}) to ${exe}`);
 if (current) console.log(`Production release: ${current.short} ${current.subject}`);
 if (flag("--launch")) {
-  Bun.spawn([exe, ...(flag("--background") ? ["--background"] : [])], { env, stdio: ["ignore", "ignore", "ignore"], cwd: TARGET }).unref();
+  const commandLine = `"${exe}"${flag("--background") ? " --background" : ""}`;
+  const ps = `$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = '${commandLine.replace(/'/g, "''")}'; CurrentDirectory = '${TARGET.replace(/'/g, "''")}' }; $r.ReturnValue`;
+  const launched = Bun.spawnSync(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", ps], { stdout: "pipe", stderr: "pipe", windowsHide: true });
+  if (launched.stdout.toString().trim() !== "0") fail(`Installed, but launching Dailies failed: ${launched.stderr.toString().trim()}`);
 } else {
   console.log("Start menu: Dailies. Quit any running Dailies and open it from there to get the Dailies icon in the taskbar.");
 }
