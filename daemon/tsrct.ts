@@ -1,7 +1,9 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-export function findCli(): string {
+export const TESSERACT_VERSION = "0.4.0";
+
+export function tryFindCli(): string | undefined {
   const override = process.env.DAILIES_TSRCT;
   if (override && existsSync(override)) return override;
   const local = process.env.LOCALAPPDATA ?? join(process.env.USERPROFILE ?? "", "AppData", "Local");
@@ -22,7 +24,13 @@ export function findCli(): string {
       if (existsSync(exe)) return exe;
     }
   }
-  throw new Error("Tesseract CLI not found. Install it per the tesseract-video skill.");
+  return undefined;
+}
+
+export function findCli(): string {
+  const cli = tryFindCli();
+  if (!cli) throw new Error(`Tesseract CLI not found. Install Tesseract CLI ${TESSERACT_VERSION}; Dailies picks it up on its own. Click Connect agent in Dailies for the steps.`);
+  return cli;
 }
 
 export async function cliVersion(cli: string): Promise<string> {
@@ -32,7 +40,7 @@ export async function cliVersion(cli: string): Promise<string> {
   return out.trim().replace(/^tsrct(\.exe)?\s*/, "");
 }
 
-export type ExportProgress = { phase: string; completed?: number; total?: number; elapsed?: number };
+export type ExportProgress = { phase: string; completed?: number; total?: number; elapsed?: number; eta?: number; rate?: number };
 
 export type ExportJob = {
   done: Promise<void>;
@@ -93,7 +101,7 @@ export function exportSpan(opts: {
         if (line.startsWith("{")) {
           try {
             const j = JSON.parse(line);
-            opts.onProgress?.({ phase: j.phase ?? j.type, completed: j.completed, total: j.total, elapsed: j.elapsedSeconds });
+            opts.onProgress?.({ phase: j.phase ?? j.type, completed: j.completed, total: j.total, elapsed: j.elapsedSeconds, eta: j.etaSeconds ?? undefined, rate: j.ratePerSecond ?? undefined });
             continue;
           } catch {}
         }
@@ -103,7 +111,7 @@ export function exportSpan(opts: {
   })();
   const done = (async () => {
     const [code] = await Promise.all([proc.exited, readErr, new Response(proc.stdout).text()]);
-    if (code !== 0) throw new Error(`tsrct export failed (${code}): ${stderrTail.trim().split("\n").slice(-6).join(" | ")}`);
+    if (code !== 0) throw new Error(`tsrct export failed (${code}): ${stderrTail.trim().split("\n").slice(-6).join(" | ") || "it stopped without an error message"}`);
   })();
   return { done, pid: proc.pid, kill: () => proc.kill() };
 }

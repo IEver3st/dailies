@@ -6,6 +6,7 @@ import { ago, cn, tc } from "@/lib/format";
 import { Button, IconButton } from "./ui/button";
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "./ui/menu";
 import type { Tool } from "./Sketch";
+import { preferences } from "@/lib/preferences";
 
 const statusText: Record<Note["status"], string> = {
   draft: "Draft",
@@ -56,6 +57,7 @@ function CueCard({
   const [text, setText] = useState(note.text);
   const [replying, setReplying] = useState(false);
   const [replyText, setReplyText] = useState("");
+  const [armed, setArmed] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const done = note.status === "resolved" || note.status === "wontfix";
 
@@ -113,7 +115,7 @@ function CueCard({
         <span className={cn("ml-auto shrink-0 text-[12.5px]", statusTone(note))}>
           {edit && note.overwrittenIn && !done ? `Overwritten in r${note.overwrittenIn}` : queued ? `Waiting for ${agentName ?? "the agent"}` : edit && note.status === "open" ? "Applied" : statusText[note.status]}
         </span>
-        <Menu>
+        <Menu onOpenChange={(o) => !o && setArmed(false)}>
           <MenuTrigger asChild>
             <button className="-my-1 grid size-6 shrink-0 place-items-center rounded-md text-dim hover:bg-hover hover:text-text" aria-label="Note actions" onClick={(e) => e.stopPropagation()}>
               <MoreHorizontal className="size-4" />
@@ -128,8 +130,18 @@ function CueCard({
             {(done || note.status === "addressed") && <MenuItem onSelect={() => void run(() => patch({ status: "open" }))}>Reopen</MenuItem>}
             <MenuItem onSelect={() => void navigator.clipboard.writeText(note.id)}>Copy note id</MenuItem>
             <MenuSeparator />
-            <MenuItem danger onSelect={() => void run(() => api(`/api/cuts/${cut.id}/notes/${note.id}`, { method: "DELETE" }))}>
-              Delete
+            <MenuItem
+              danger
+              onSelect={(e) => {
+                if (preferences().confirmDelete && !armed) {
+                  e.preventDefault();
+                  setArmed(true);
+                  return;
+                }
+                void run(() => api(`/api/cuts/${cut.id}/notes/${note.id}`, { method: "DELETE" }));
+              }}
+            >
+              {armed ? "Click again to delete" : "Delete"}
             </MenuItem>
           </MenuContent>
         </Menu>
@@ -246,7 +258,7 @@ export const Cues = forwardRef<
   }
 >(function Cues({ cut, cues, selected, onSelect, onSeek, now, range, tool, onTool, pending, onClearPending, captureMarked, toast }, ref) {
   const [text, setText] = useState("");
-  const [showDone, setShowDone] = useState(false);
+  const [showDone, setShowDone] = useState(() => preferences().showResolved);
   const [busy, setBusy] = useState(false);
   const input = useRef<HTMLTextAreaElement>(null);
   const drafts = cues.filter((n) => n.status === "draft");
@@ -254,6 +266,7 @@ export const Cues = forwardRef<
   const visible = showDone ? cues : cues.filter((n) => !done.includes(n));
   const agentName = cut.collaborators.at(-1)?.agent ?? cut.agent?.name;
   const at = range ? range.in : now;
+  const sendCount = drafts.length + (text.trim() || pending.length ? 1 : 0);
 
   const add = async () => {
     if (!text.trim() && !pending.length) return;
@@ -312,7 +325,7 @@ export const Cues = forwardRef<
           </button>
         )}
       </div>
-      <div className="grid gap-2.5 px-4 pt-3 pb-4">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-2.5 px-4 pt-3 pb-4">
         <div className="rounded-xl bg-ink px-3 pt-2.5 pb-2 focus-within:shadow-[inset_0_0_0_1px_var(--color-line)]">
           <div className="flex items-baseline gap-2 text-[12.5px]">
             <span className="font-semibold text-amber">{range ? `${tc(range.in)} to ${tc(range.out)}` : tc(now)}</span>
@@ -353,10 +366,15 @@ export const Cues = forwardRef<
           <Button variant="quiet" disabled={busy || (!text.trim() && !pending.length)} onClick={() => void add()}>
             Add
           </Button>
-          <Button variant="primary" disabled={!drafts.length && !text.trim() && !pending.length} onClick={() => void send()}>
-            {drafts.length + (text.trim() || pending.length ? 1 : 0) > 0
-              ? `Send ${drafts.length + (text.trim() || pending.length ? 1 : 0)}${agentName ? ` to ${agentName.length > 18 ? `${agentName.slice(0, 17)}...` : agentName}` : ""}`
-              : "Send"}
+          <Button
+            variant="primary"
+            className="min-w-0 !shrink !gap-1"
+            title={sendCount && agentName ? `Send ${sendCount} to ${agentName}` : undefined}
+            disabled={!sendCount}
+            onClick={() => void send()}
+          >
+            <span className="shrink-0">{sendCount ? `Send ${sendCount}` : "Send"}</span>
+            {sendCount > 0 && agentName && <span className="min-w-0 truncate">to {agentName}</span>}
           </Button>
         </div>
       </div>

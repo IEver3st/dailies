@@ -12,5 +12,5 @@
     "paths": { "@/*": ["src/renderer/src/*"] },
     "types": ["vite/client"]
   },
-  "include": ["src/renderer/src/**/*.ts", "src/renderer/src/**/*.tsx", "src/preload/api.d.ts"]
+  "include": ["src/renderer/src/**/*.ts", "src/renderer/src/**/*.tsx", "src/preload/api.d.ts", "src/shared/**/*.ts"]
 }

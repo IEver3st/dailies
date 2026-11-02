@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { absoluteWindow, canonical, contextAt, findLayer, layerWindow, type Doc, type Layer } from "./doc";
 import { applyActions, findCli } from "./tsrct";
 import { emit } from "./events";
+import { owner } from "./settings";
 import { nowIso, describeChanges, type Cut } from "./cuts";
 import type { Annotation, Author, Note, NoteStatus, Revision, Suggestion } from "./types";
 
@@ -154,7 +155,7 @@ export async function publish(cut: Cut) {
   cut.saveNotes();
   cut.log({ author: YOU, kind: "publish", rev: cut.latest?.n, text: `Sent ${drafts.length} note${drafts.length === 1 ? "" : "s"} on r${cut.latest?.n ?? "?"}` });
   emit({ type: "notes", cutId: cut.id });
-  const delivered = await deliver(cut, `Manuel left ${drafts.length} new note${drafts.length === 1 ? "" : "s"} on "${cut.name}" (r${cut.latest?.n}) in Dailies.`);
+  const delivered = await deliver(cut, `${owner()} left ${drafts.length} new note${drafts.length === 1 ? "" : "s"} on "${cut.name}" (r${cut.latest?.n}) in Dailies.`);
   return { published: drafts.length, delivered };
 }
 
@@ -164,7 +165,7 @@ export async function approve(cut: Cut, revN: number) {
   cut.log({ author: YOU, kind: "approve", rev: revN, text: `Approved r${revN}` });
   emit({ type: "cuts" });
   emit({ type: "cut", cutId: cut.id });
-  await deliver(cut, `Manuel approved r${revN} of "${cut.name}" in Dailies.`);
+  await deliver(cut, `${owner()} approved r${revN} of "${cut.name}" in Dailies.`);
 }
 
 export type Collaborator = { thread: string; agent: string; at: string; link?: string };
@@ -346,7 +347,7 @@ export async function edit(cut: Cut, requests: EditRequest[], opts: { force?: bo
   cut.saveNotes();
   cut.log({ author: YOU, kind: "edit", noteId: id, rev: base.n, text: queued ? `Queued for ${cut.agent?.name}: ${summary}` : `Edited: ${summary}` });
   emit({ type: "notes", cutId: cut.id, noteId: id });
-  if (queued) await deliver(cut, `Manuel queued an edit on "${cut.name}" in Dailies: ${summary}.`);
+  if (queued) await deliver(cut, `${owner()} queued an edit on "${cut.name}" in Dailies: ${summary}.`);
   else cut.scheduleIngest(0);
   return { note, queued };
 }

@@ -67,7 +67,7 @@ export type Activity = {
   id: string;
   at: string;
   author: Author;
-  kind: "status" | "revision" | "note" | "reply" | "publish" | "approve" | "edit" | "render" | "open";
+  kind: "status" | "revision" | "note" | "reply" | "publish" | "approve" | "edit" | "render" | "export" | "open";
   state?: "working" | "ready" | "blocked" | "idle";
   text: string;
   rev?: number;

@@ -33,6 +33,7 @@ type Options = {
   bun: () => string;
   icon: string;
   windowVisible: () => boolean;
+  autoRestart: () => boolean;
   beforeRestart: () => void;
   onChange: (state: UpdateState) => void;
 };
@@ -99,8 +100,8 @@ export function createUpdater(o: Options) {
   }
 
   function onReady(ready: ReleaseInfo) {
-    if (!o.windowVisible()) {
-      setTimeout(() => state.ready?.dir === ready.dir && !o.windowVisible() && apply(), 3000);
+    if (!o.windowVisible() && o.autoRestart()) {
+      setTimeout(() => state.ready?.dir === ready.dir && !o.windowVisible() && o.autoRestart() && apply(), 3000);
       return;
     }
     if (announced.has(ready.dir) || !Notification.isSupported()) return;
@@ -180,7 +181,7 @@ export function createUpdater(o: Options) {
     check,
     apply,
     rollback,
-    windowHidden: () => state.ready && apply(),
+    windowHidden: () => state.ready && o.autoRestart() && apply(),
     state: () => ({ ...state }),
     logFile,
   };

@@ -1,15 +1,22 @@
-import { app, BrowserWindow, Tray, Menu, Notification, dialog, ipcMain, nativeImage, shell } from "electron";
+import { app, BrowserWindow, Tray, Menu, Notification, dialog, ipcMain, nativeImage, nativeTheme, shell } from "electron";
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync, openSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, renameSync, openSync, mkdirSync, rmSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { createUpdater, type UpdateState } from "./updater";
+import { createPreferences } from "./preferences";
+import type { Alert, SettingsSnapshot } from "../shared/preferences";
+import { resolveTheme } from "../shared/themes";
 
 type DaemonInfo = { port: number; token: string; pid?: number; root?: string };
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
-const APP_DIR = join(process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"), "Dailies");
+const APP_DIR = process.env.DAILIES_HOME ? resolve(process.env.DAILIES_HOME) : join(process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"), "Dailies");
+const RELEASED = existsSync(join(ROOT, "release.json"));
+if (process.env.DAILIES_HOME) app.setPath("userData", join(APP_DIR, RELEASED ? "electron-release" : "electron"));
+else if (!RELEASED) app.setPath("userData", join(app.getPath("appData"), "Dailies Dev"));
+const prefs = createPreferences(APP_DIR);
 const DAEMON_FILE = join(APP_DIR, "daemon.json");
 const RESOURCES = join(ROOT, "resources");
 const startHidden = process.argv.includes("--background");
@@ -30,6 +37,7 @@ const updater = createUpdater({
   bun: bunPath,
   icon: join(RESOURCES, "icon.png"),
   windowVisible: () => !!win?.isVisible(),
+  autoRestart: () => prefs.get().autoRestart,
   beforeRestart: () => {
     quitting = true;
   },
@@ -72,9 +80,11 @@ if (INSTALLED) {
     registerShortcut();
   } catch {}
 }
-if (process.argv.includes("--register")) {
+const registering = process.argv.includes("--register");
+const primary = !registering && app.requestSingleInstanceLock();
+if (registering) {
   app.exit(0);
-} else if (!app.requestSingleInstanceLock()) {
+} else if (!primary) {
   app.quit();
 } else {
   app.on("second-instance", (_e, argv) => {
@@ -107,7 +117,6 @@ function bunPath() {
   return candidates.find((p): p is string => !!p && existsSync(p)) ?? "bun";
 }
 
-const RELEASED = existsSync(join(ROOT, "release.json"));
 const samePath = (a?: string, b?: string) => !!a && !!b && resolve(a).toLowerCase() === resolve(b).toLowerCase();
 
 async function retire(info: DaemonInfo) {
@@ -118,12 +127,38 @@ async function retire(info: DaemonInfo) {
   while (Date.now() < until && (await healthy(info))) await new Promise((r) => setTimeout(r, 200));
 }
 
-async function ensureDaemon(): Promise<DaemonInfo> {
-  const current = readDaemonFile();
-  if (await healthy(current)) {
-    if (!RELEASED || samePath(current!.root, ROOT)) return current!;
-    await retire(current!);
+const isDevRoot = (root?: string) => !!root && existsSync(join(root, "package.json")) && !existsSync(join(root, "release.json"));
+const accepts = (root?: string) => samePath(root, ROOT) || (RELEASED && isDevRoot(root));
+const alive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
   }
+};
+
+function stake() {
+  mkdirSync(APP_DIR, { recursive: true });
+  const tmp = `${DAEMON_FILE}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    writeFileSync(tmp, JSON.stringify({ claim: ROOT, by: process.pid, at: Date.now() }));
+    renameSync(tmp, DAEMON_FILE);
+  } catch {
+    rmSync(tmp, { force: true });
+  }
+}
+
+function staked() {
+  try {
+    const j = JSON.parse(readFileSync(DAEMON_FILE, "utf8"));
+    return typeof j.claim === "string" && j.by !== process.pid && alive(j.by) && Date.now() - j.at < 30_000 && accepts(j.claim);
+  } catch {
+    return false;
+  }
+}
+
+function startDaemon() {
   mkdirSync(APP_DIR, { recursive: true });
   const log = openSync(join(APP_DIR, "daemon.log"), "a");
   const child = spawn(bunPath(), [join(ROOT, "daemon", "main.ts"), "--parent-pid", String(process.pid), "--ui", join(ROOT, "out", "renderer")], {
@@ -133,32 +168,73 @@ async function ensureDaemon(): Promise<DaemonInfo> {
     detached: false,
   });
   child.unref();
-  const until = Date.now() + 45_000;
-  while (Date.now() < until) {
-    await new Promise((r) => setTimeout(r, 300));
-    const next = readDaemonFile();
-    if (await healthy(next)) return next!;
-    if (child.exitCode !== null && child.exitCode !== 0) break;
+  return child;
+}
+
+let ensuring: Promise<DaemonInfo> | undefined;
+function ensureDaemon() {
+  return (ensuring ??= connectDaemon().finally(() => (ensuring = undefined)));
+}
+
+async function connectDaemon(): Promise<DaemonInfo> {
+  const failed = () => new Error(`The Dailies service did not start. See ${join(APP_DIR, "daemon.log")}.`);
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const current = readDaemonFile();
+    if (await healthy(current)) {
+      if (accepts(current!.root)) return current!;
+      stake();
+      await retire(current!);
+    }
+    const child = staked() ? undefined : startDaemon();
+    const until = Date.now() + 45_000;
+    for (;;) {
+      if (Date.now() > until) throw failed();
+      await new Promise((r) => setTimeout(r, 300));
+      const next = readDaemonFile();
+      const exited = child ? child.exitCode !== null : !staked();
+      if (await healthy(next)) {
+        if (accepts(next!.root)) return next!;
+        if (exited) break;
+      } else if (exited) {
+        if (child?.exitCode) throw failed();
+        break;
+      }
+    }
   }
-  throw new Error(`The Dailies service did not start. See ${join(APP_DIR, "daemon.log")}.`);
+  throw failed();
 }
 
 function rendererUrl() {
   return process.env.ELECTRON_RENDERER_URL;
 }
 
+function windowTheme() {
+  const choice = prefs.get().theme;
+  const source = choice === "system" ? "system" : resolveTheme(choice, true).scheme;
+  if (nativeTheme.themeSource !== source) nativeTheme.themeSource = source;
+  return resolveTheme(choice, nativeTheme.shouldUseDarkColors);
+}
+
+function paintWindow() {
+  if (!win || win.isDestroyed()) return;
+  const t = windowTheme();
+  win.setBackgroundColor(t.palette.ink);
+  win.setTitleBarOverlay({ color: t.palette.ink, symbolColor: t.symbol, height: 48 });
+}
+
 function createWindow() {
+  const theme = windowTheme();
   win = new BrowserWindow({
     width: 1600,
     height: 1000,
     minWidth: 1120,
     minHeight: 720,
     show: false,
-    backgroundColor: "#0f1b1d",
+    backgroundColor: theme.palette.ink,
     title: "Dailies",
     icon: join(RESOURCES, process.platform === "win32" ? "icon.ico" : "icon.png"),
     titleBarStyle: "hidden",
-    titleBarOverlay: { color: "#0f1b1d", symbolColor: "#8aa3a0", height: 48 },
+    titleBarOverlay: { color: theme.palette.ink, symbolColor: theme.symbol, height: 48 },
     webPreferences: {
       preload: fileURLToPath(new URL("../preload/index.cjs", import.meta.url)),
       sandbox: false,
@@ -172,11 +248,15 @@ function createWindow() {
     return { action: "deny" };
   });
   win.on("close", (e) => {
-    if (!quitting) {
-      e.preventDefault();
-      win?.hide();
-      updater.windowHidden();
+    if (quitting) return;
+    if (prefs.get().closeAction === "quit") {
+      quitting = true;
+      app.quit();
+      return;
     }
+    e.preventDefault();
+    win?.hide();
+    updater.windowHidden();
   });
   win.once("ready-to-show", () => {
     if (!startHidden) win?.show();
@@ -197,9 +277,37 @@ function showWindow(cutId?: string) {
   win!.focus();
 }
 
+function openSettings(page?: string) {
+  showWindow();
+  const send = () => win?.webContents.send("dailies:openSettings", page);
+  if (win?.webContents.isLoading()) win.webContents.once("did-finish-load", send);
+  else send();
+}
+
 function loginEnabled() {
   return app.getLoginItemSettings({ args: ["--background"] }).openAtLogin;
 }
+
+function setLogin(on: boolean) {
+  app.setLoginItemSettings({ openAtLogin: on, args: ["--background"] });
+  refreshTray?.();
+  broadcastSettings();
+}
+
+function snapshot(): SettingsSnapshot {
+  return { preferences: prefs.get(), startWithWindows: loginEnabled(), installed: INSTALLED, appDir: APP_DIR };
+}
+
+function broadcastSettings() {
+  win?.webContents.send("dailies:settings", snapshot());
+}
+
+prefs.onChange(broadcastSettings);
+prefs.onChange(paintWindow);
+nativeTheme.on("updated", paintWindow);
+ipcMain.on("dailies:initialTheme", (e) => {
+  e.returnValue = prefs.get().theme;
+});
 
 function updateItems(u: UpdateState): Electron.MenuItemConstructorOptions[] {
   if (!u.enabled) return [{ label: "Development build", enabled: false }, { type: "separator" }];
@@ -226,11 +334,9 @@ function buildTray() {
           label: "Start with Windows",
           type: "checkbox",
           checked: loginEnabled(),
-          click: (item) => {
-            app.setLoginItemSettings({ openAtLogin: item.checked, args: ["--background"] });
-            refresh();
-          },
+          click: (item) => setLogin(item.checked),
         },
+        { label: "Settings", click: () => openSettings() },
         { label: "Open cache folder", click: () => void shell.openPath(APP_DIR) },
         { type: "separator" },
         {
@@ -281,16 +387,30 @@ async function onEvent(e: any) {
     const rev = d?.revisions?.at(-1);
     if (!rev || seenRevisions.get(e.cutId) === rev.n) return;
     seenRevisions.set(e.cutId, rev.n);
-    if (rev.authorKind !== "agent" || (win?.isVisible() && win.isFocused())) return;
-    notify(`${rev.author} published r${rev.n} of ${d.name}`, rev.summary, e.cutId);
+    if (rev.authorKind !== "agent") return;
+    notify(prefs.get().revisionAlerts, `${rev.author} published r${rev.n} of ${d.name}`, rev.summary, e.cutId);
   }
-  if (e.type === "focus" && e.cutId && win?.isVisible()) win.webContents.send("dailies:navigate", e.cutId);
+  if (e.type === "agent" && e.state === "blocked" && e.cutId) {
+    notify(prefs.get().blockedAlerts, `${e.name ?? "An agent"} needs you on ${e.cut ?? "a cut"}`, e.text || "Open the cut to see what it is waiting on.", e.cutId);
+  }
+  if (e.type === "export" && e.state === "done" && typeof e.file === "string") {
+    const file: string = e.file;
+    const size = typeof e.bytes === "number" ? `${Math.round(e.bytes / 1e6)} MB, ` : "";
+    notify("sound", `Exported r${e.rev} of ${e.cut ?? "your cut"}`, `${size}4K60. Click to show it in Explorer.`, e.cutId, () => {
+      if (existsSync(file)) shell.showItemInFolder(file);
+    });
+  }
+  if (e.type === "export" && e.state === "failed") {
+    notify("sound", `Export of r${e.rev} of ${e.cut ?? "your cut"} failed`, String(e.error ?? "Open the cut to see why."), e.cutId);
+  }
+  if (e.type === "focus" && e.cutId && win?.isVisible() && prefs.get().followAgents) win.webContents.send("dailies:navigate", e.cutId);
 }
 
-function notify(title: string, body: string, cutId: string) {
-  if (!Notification.isSupported()) return;
-  const n = new Notification({ title, body, icon: join(RESOURCES, "icon.png"), silent: false });
-  n.on("click", () => showWindow(cutId));
+function notify(alert: Alert, title: string, body: string, cutId: string, onClick?: () => void) {
+  if (alert === "off" || !Notification.isSupported()) return;
+  if (win?.isVisible() && win.isFocused() && (onClick || !prefs.get().alertWhenFocused)) return;
+  const n = new Notification({ title, body, icon: join(RESOURCES, "icon.png"), silent: alert === "silent" });
+  n.on("click", () => (onClick ? onClick() : showWindow(cutId)));
   n.show();
 }
 
@@ -300,6 +420,28 @@ ipcMain.handle("dailies:connection", async () => {
 });
 ipcMain.handle("dailies:updateState", () => updater.state());
 ipcMain.handle("dailies:applyUpdate", () => updater.apply());
+ipcMain.handle("dailies:checkUpdates", () => updater.check());
+ipcMain.handle("dailies:rollback", () => updater.rollback());
+ipcMain.handle("dailies:settings", () => snapshot());
+ipcMain.handle("dailies:setPreferences", (_e, patch: unknown) => {
+  prefs.set(patch);
+  return snapshot();
+});
+ipcMain.handle("dailies:setStartWithWindows", (_e, on: unknown) => {
+  if (INSTALLED && typeof on === "boolean") setLogin(on);
+  return snapshot();
+});
+ipcMain.handle("dailies:pickFolder", async () => {
+  const r = await dialog.showOpenDialog(win!, { title: "Add a project folder", properties: ["openDirectory"] });
+  return r.canceled ? undefined : r.filePaths[0];
+});
+ipcMain.handle("dailies:openFolder", (_e, path: string) => {
+  if (typeof path === "string" && existsSync(path)) void shell.openPath(path);
+});
+ipcMain.handle("dailies:openLog", (_e, which: string) => {
+  const file = which === "updates" ? updater.logFile : which === "daemon" ? join(APP_DIR, "daemon.log") : undefined;
+  if (file && existsSync(file)) void shell.openPath(file);
+});
 ipcMain.handle("dailies:takeNavigation", () => {
   const nav = pendingNav;
   pendingNav = undefined;
@@ -322,6 +464,7 @@ app.on("before-quit", () => {
 });
 
 void app.whenReady().then(async () => {
+  if (!primary) return;
   buildTray();
   try {
     daemon = await ensureDaemon();

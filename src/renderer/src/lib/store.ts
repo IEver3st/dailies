@@ -26,6 +26,7 @@ export function useCuts() {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const off = onEvent((e) => {
       if (e.type === "ping" || e.type === "hello") return;
+      if (e.type === "library") void refreshLibrary();
       clearTimeout(timer);
       timer = setTimeout(() => void refresh(), 200);
     });

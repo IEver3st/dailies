@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Pause, Play, Repeat, Smartphone, Columns2, Maximize, FolderOpen, ExternalLink } from "lucide-react";
+import { ChevronLeft, ChevronRight, Pause, Play, Repeat, Smartphone, Columns2, Maximize, FolderOpen, ExternalLink, Settings as Gear } from "lucide-react";
 import type { Annotation, CutDetail, TrackItem } from "@/lib/api";
-import { api, mediaUrl } from "@/lib/api";
+import { api, mediaUrl, onEvent } from "@/lib/api";
 import { useCut } from "@/lib/store";
 import { PlayerController, usePlayerSelect } from "@/lib/player";
-import { ago, cn, FPS, frameAt, frameOf, tc } from "@/lib/format";
+import { ago, cn, FPS, frameAt, frameOf, megabytes, tc } from "@/lib/format";
 import { Button, IconButton, Tip } from "./ui/button";
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "./ui/menu";
 import { Tabs, Tab, TabsContent, TabsList } from "./ui/tabs";
@@ -16,15 +16,19 @@ import { Cues, type ComposerHandle } from "./Cues";
 import { Inspector, type EditRequest } from "./Inspector";
 import { History } from "./History";
 import { Mark } from "./Mark";
+import { openSettings } from "./Settings";
+import { ExportControl } from "./Export";
+import { preferences, usePreference } from "@/lib/preferences";
 
-type Toast = { id: number; text: string; tone?: "error" };
+type ToastAction = { label: string; run: () => void };
+type Toast = { id: number; text: string; tone?: "error"; action?: ToastAction };
 
 function useToasts() {
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const push = useCallback((text: string, tone?: "error") => {
+  const push = useCallback((text: string, tone?: "error", action?: ToastAction) => {
     const id = Date.now() + Math.random();
-    setToasts((t) => [...t.slice(-2), { id, text, tone }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), tone === "error" ? 7000 : 3800);
+    setToasts((t) => [...t.slice(-2), { id, text, tone, action }]);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), action ? 9000 : tone === "error" ? 7000 : 3800);
   }, []);
   return { toasts, push };
 }
@@ -131,6 +135,38 @@ export function Review({ cutId, start, onBack }: { cutId: string; start?: { rev?
   const composer = useRef<ComposerHandle>(null);
   const stage = useRef<HTMLDivElement>(null);
   const { toasts, push } = useToasts();
+  const loopCut = usePreference("loopCut");
+  const safeDefault = usePreference("safeZones");
+  const safeApplied = useRef(false);
+  const autoplayed = useRef(false);
+  const portrait = cut?.latest ? cut.latest.height > cut.latest.width : undefined;
+
+  useEffect(() => controller.setLoopAll(loopCut), [controller, loopCut]);
+  useEffect(() => {
+    if (safeApplied.current || portrait === undefined) return;
+    safeApplied.current = true;
+    setSafe(safeDefault === "always" || (safeDefault === "portrait" && portrait));
+  }, [portrait, safeDefault]);
+  useEffect(() => {
+    if (!src || autoplayed.current) return;
+    autoplayed.current = true;
+    if (preferences().autoplay) controller.play();
+  }, [src, controller]);
+
+  useEffect(() => {
+    const off = onEvent((e) => {
+        if (e.type !== "export" || e.cutId !== cutId) return;
+        if (e.state === "done" && typeof e.file === "string") {
+          const file = e.file;
+          const size = typeof e.bytes === "number" ? `, ${megabytes(e.bytes)}` : "";
+          push(`Exported r${e.rev} in 4K60${size}`, undefined, window.dailies ? { label: "Show in Explorer", run: () => void window.dailies?.reveal(file) } : undefined);
+        } else if (e.state === "failed") push(`Export of r${e.rev} failed: ${String(e.error ?? "unknown error")}`, "error");
+      else if (e.state === "cancelled") push(`Cancelled the r${e.rev} export`);
+    });
+    return () => {
+      off();
+    };
+  }, [cutId, push]);
 
   const movieKey = cut?.movie ? `${cut.movie.rev}-${cut.movie.key}` : undefined;
   useEffect(() => {
@@ -369,6 +405,10 @@ export function Review({ cutId, start, onBack }: { cutId: string; start?: { rev?
         >
           {cut.approvedRev === viewing ? `r${viewing} approved` : `Approve r${viewing}`}
         </Button>
+        <ExportControl cut={cut} viewing={viewing} toast={push} />
+        <IconButton label="Settings" keys="Ctrl ," side="bottom" onClick={() => openSettings("review")}>
+          <Gear />
+        </IconButton>
       </header>
 
       <div className="grid min-h-0 grid-cols-[1fr_400px]">
@@ -555,8 +595,26 @@ export function Review({ cutId, start, onBack }: { cutId: string; start?: { rev?
 
       <div className="pointer-events-none fixed inset-x-0 bottom-6 z-50 flex flex-col items-center gap-2">
         {toasts.map((t) => (
-          <div key={t.id} className={cn("max-w-xl rounded-xl px-4 py-2.5 shadow-[0_10px_40px_rgba(0,0,0,.5)]", t.tone === "error" ? "bg-[#3a1f1c] text-[#ffd2cc]" : "bg-raised text-text")}>
+          <div
+            key={t.id}
+            className={cn(
+              "flex max-w-xl items-center gap-4 rounded-xl py-2.5 shadow-[0_10px_40px_rgba(0,0,0,.5)]",
+              t.action ? "pointer-events-auto pr-2.5 pl-4" : "px-4",
+              t.tone === "error" ? "bg-error-bg text-error-text" : "bg-raised text-text",
+            )}
+          >
             {t.text}
+            {t.action && (
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={() => {
+                  t.action!.run();
+                }}
+              >
+                {t.action.label}
+              </Button>
+            )}
           </div>
         ))}
       </div>

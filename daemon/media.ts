@@ -2,8 +2,6 @@ import { existsSync, readdirSync, renameSync, readFileSync, writeFileSync, mkdir
 import { join } from "node:path";
 import { SLATE_CACHE } from "./paths";
 
-export const FFMPEG = process.env.DAILIES_FFMPEG || findOnPath("ffmpeg") || "ffmpeg";
-
 function findOnPath(name: string): string | undefined {
   const dirs = (process.env.PATH ?? "").split(";");
   for (const d of dirs) {
@@ -12,6 +10,36 @@ function findOnPath(name: string): string | undefined {
   }
   return undefined;
 }
+
+function wingetFfmpeg(packages: string): string | undefined {
+  try {
+    for (const pkg of readdirSync(packages).filter((d) => d.toLowerCase().startsWith("gyan.ffmpeg"))) {
+      for (const build of readdirSync(join(packages, pkg))) {
+        const exe = join(packages, pkg, build, "bin", "ffmpeg.exe");
+        if (existsSync(exe)) return exe;
+      }
+    }
+  } catch {}
+  return undefined;
+}
+
+export function findFfmpeg(): string | undefined {
+  const override = process.env.DAILIES_FFMPEG;
+  if (override) return existsSync(override) ? override : undefined;
+  const local = process.env.LOCALAPPDATA ?? join(process.env.USERPROFILE ?? "", "AppData", "Local");
+  const candidates = [
+    findOnPath("ffmpeg"),
+    join(local, "Microsoft", "WinGet", "Links", "ffmpeg.exe"),
+    wingetFfmpeg(join(local, "Microsoft", "WinGet", "Packages")),
+    join(process.env.USERPROFILE ?? "", "scoop", "shims", "ffmpeg.exe"),
+    join(process.env.ProgramData ?? "C:\\ProgramData", "chocolatey", "bin", "ffmpeg.exe"),
+  ];
+  return candidates.find((p): p is string => !!p && existsSync(p));
+}
+
+const foundFfmpeg = findFfmpeg();
+export const FFMPEG_FOUND = !!foundFfmpeg;
+export const FFMPEG = foundFfmpeg ?? process.env.DAILIES_FFMPEG ?? "ffmpeg";
 
 export async function run(args: string[], input?: Uint8Array): Promise<{ code: number; stderr: string; stdout: Uint8Array }> {
   const p = Bun.spawn(args, { stdin: input ? "pipe" : "ignore", stdout: "pipe", stderr: "pipe", windowsHide: true });
@@ -33,8 +61,13 @@ let encoderProbe: Promise<string> | undefined;
 export function pickEncoder(): Promise<string> {
   encoderProbe ??= (async () => {
     if (process.env.DAILIES_ENCODER) return process.env.DAILIES_ENCODER;
-    const r = await run([FFMPEG, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=black:s=1280x720:r=30:d=0.2", "-c:v", "h264_amf", "-f", "null", "-"]);
-    return r.code === 0 ? "h264_amf" : "libx264";
+    if (!FFMPEG_FOUND) return "libx264";
+    try {
+      const r = await run([FFMPEG, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=black:s=1280x720:r=30:d=0.2", "-c:v", "h264_amf", "-f", "null", "-"]);
+      return r.code === 0 ? "h264_amf" : "libx264";
+    } catch {
+      return "libx264";
+    }
   })();
   return encoderProbe;
 }

@@ -3,6 +3,7 @@ import { join, extname, resolve, sep } from "node:path";
 import { subscribe, type DailiesEvent, emit } from "./events";
 import type { Registry, Cut } from "./cuts";
 import type { Renderer } from "./render";
+import type { Exporter } from "./exports";
 import { videoFile } from "./render";
 import { contextAt, timelineItems, SEGMENT_MS } from "./doc";
 import { extractFrame, extractThumb, run, FFMPEG, THUMB_SHORT_SIDE } from "./media";
@@ -15,8 +16,12 @@ import {
   type EditRequest,
 } from "./collab";
 import type { Author, Note, NoteStatus } from "./types";
+import { owner, seeClient, updateSettings } from "./settings";
+import { setupReport } from "./setup";
+import { CACHE_CHOICES, SERVICE_DEFAULTS, SLOT_CHOICES, cacheUsage, serviceSettings, updateService } from "./service";
+import { CACHE_DIR, HOME_ID } from "./paths";
 
-type Ctx = { registry: Registry; renderer: Renderer; token: string; uiDir: () => string | undefined; startedAt: string; version: string };
+type Ctx = { registry: Registry; renderer: Renderer; exporter: Exporter; token: string; uiDir: () => string | undefined; startedAt: string; version: string };
 
 type Caching = "immutable" | "no-cache" | "no-store";
 const CACHE_HEADER: Record<Caching, string> = { immutable: "private, max-age=31536000, immutable", "no-cache": "no-cache", "no-store": "no-store" };
@@ -99,13 +104,14 @@ export function cutDetail(ctx: Ctx, cut: Cut, rev?: number) {
   return {
     ...cut.summary(ctx.renderer.progressFor(cut)),
     rev: r?.n,
-    revisions: cut.revisions.map((x) => ({ ...revisionInfo(x), authorKind: x.author.kind, published: !!x.published, hasMovie: !!ctx.renderer.movie(cut.id, x.n), movieKey: ctx.renderer.movie(cut.id, x.n)?.key, restorable: !!x.snapshot && existsSync(x.snapshot) })),
+    revisions: cut.revisions.map((x) => ({ ...revisionInfo(x), authorKind: x.author.kind, published: !!x.published, hasMovie: !!ctx.renderer.movie(cut.id, x.n), movieKey: ctx.renderer.movie(cut.id, x.n)?.key, restorable: !!x.snapshot && existsSync(x.snapshot), exportable: !!cut.renderSource(x.n) })),
     timeline: doc ? timelineItems(doc) : [],
     segments: r ? ctx.renderer.segmentStates(cut, r) : [],
     changedSegments: r?.changedSegments ?? [],
     movie: movie ? { rev: movie.rev, key: movie.key, stale: movie.stale, missing: movie.missing, complete: movie.complete } : undefined,
     jobs: ctx.renderer.jobsFor(cut.id),
     renderError: ctx.renderer.failureFor(cut),
+    export: ctx.exporter.stateFor(cut),
     notes: cut.notes.map((n) => {
       const d = displayTime(n as any, doc);
       return { ...n, displayT: d.t, moved: d.moved, anchorGone: d.gone, frame: n.frame ? `/api/cuts/${cut.id}/notes/${n.id}/frame` : undefined, annotatedFrame: n.annotatedFrame ? `/api/cuts/${cut.id}/notes/${n.id}/frame?marked=1` : undefined };
@@ -190,8 +196,9 @@ export function startServer(ctx: Ctx, port: number) {
       }
 
       const token = req.headers.get("x-dailies-token") ?? url.searchParams.get("token");
-      if (p === "/api/health") return json({ ok: true, app: "dailies", version: ctx.version, pid: process.pid, startedAt: ctx.startedAt, authed: token === ctx.token });
+      if (p === "/api/health") return json({ ok: true, app: "dailies", version: ctx.version, pid: process.pid, home: HOME_ID, startedAt: ctx.startedAt, authed: token === ctx.token });
       if (token !== ctx.token) return fail(401, "missing or wrong token");
+      seeClient(req.headers.get("x-dailies-client"), req.headers.get("x-dailies-t3") === "1");
 
       try {
         const body: any = req.method === "POST" || req.method === "PATCH" ? await req.json().catch(() => ({})) : {};
@@ -224,6 +231,12 @@ export function startServer(ctx: Ctx, port: number) {
           return new Response(stream, { headers: { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" } });
         }
 
+        if (p === "/api/setup") return json(await setupReport(ctx.registry.roots));
+        if (p === "/api/settings" && req.method === "POST") {
+          updateSettings(body);
+          return json(await setupReport(ctx.registry.roots));
+        }
+        if (p === "/api/service" || p.startsWith("/api/service/")) return json(await serviceRoute(ctx, p.slice("/api/service".length), req.method, body));
         if (p === "/api/state") {
           return json({ cuts: [...ctx.registry.cuts.values()].map((c) => c.summary(ctx.renderer.progressFor(c))).sort((a, b) => (b.latest?.at ?? "").localeCompare(a.latest?.at ?? "")) });
         }
@@ -332,6 +345,12 @@ export function startServer(ctx: Ctx, port: number) {
             ctx.renderer.plan(cut, rev);
             return json({ ok: true });
           }
+          if (sub === "export" && req.method === "POST") {
+            if (segs[4] === "cancel") return json({ ok: ctx.exporter.cancel(cut) });
+            const rev = Number(body.rev ?? cut.latest?.n);
+            const id = ctx.exporter.start(cut, rev, YOU);
+            return json({ id, export: ctx.exporter.stateFor(cut) });
+          }
           if (sub === "publish" && req.method === "POST") return json(await publish(cut));
           if (sub === "approve" && req.method === "POST") {
             await approve(cut, Number(body.rev ?? cut.latest?.n));
@@ -421,6 +440,7 @@ export function startServer(ctx: Ctx, port: number) {
             cut.saveState();
             cut.log({ author: who, kind: "status", state, text: String(body.message ?? state) });
             emit({ type: "cuts" });
+            emit({ type: "agent", cutId: cut.id, cut: cut.name, name: who.name, state, text: String(body.message ?? "") });
             return json({ ok: true });
           }
           if (op === "publish") {
@@ -471,7 +491,7 @@ export function startServer(ctx: Ctx, port: number) {
               found = pending();
             }
             const appr = approvedSince();
-            return json({ now: new Date().toISOString(), approved: appr ? appr.rev : undefined, changed: found.map((n) => ({ id: n.id, kind: n.kind, status: n.status, text: clip(n.text, 140) })), hint: found.length || appr ? "Call dailies_feedback for details." : "Nothing new yet. Wait again or end your turn; Dailies will message your thread when Manuel sends notes." });
+            return json({ now: new Date().toISOString(), approved: appr ? appr.rev : undefined, changed: found.map((n) => ({ id: n.id, kind: n.kind, status: n.status, text: clip(n.text, 140) })), hint: found.length || appr ? "Call dailies_feedback for details." : `Nothing new yet. Wait again or end your turn; Dailies messages a linked T3 thread when ${owner("the user")} sends notes.` });
           }
           if (op === "reply") {
             const n = reply(cut, String(body.note), String(body.text ?? ""), who, body.status as NoteStatus | undefined, cut.latest?.n);
@@ -495,4 +515,39 @@ export function startServer(ctx: Ctx, port: number) {
       }
     },
   });
+}
+
+function serviceState(ctx: Ctx) {
+  const files = ctx.registry.scanLibrary();
+  const roots = ctx.registry.roots.map((path) => ({
+    path,
+    exists: existsSync(path),
+    projects: files.filter((f) => f.path.toLowerCase().startsWith(path.toLowerCase() + sep)).length,
+  }));
+  return {
+    settings: serviceSettings(),
+    defaults: SERVICE_DEFAULTS,
+    choices: { cacheGb: CACHE_CHOICES, renderSlots: SLOT_CHOICES },
+    roots,
+    cache: { dir: CACHE_DIR, ...cacheUsage() },
+    render: { resolution: RENDER_SETTINGS.resolution, fps: RENDER_SETTINGS.fps, segmentMs: RENDER_SETTINGS.segmentMs, encoder: RENDER_SETTINGS.encoder, cli: RENDER_SETTINGS.cli },
+    version: ctx.version,
+    startedAt: ctx.startedAt,
+  };
+}
+
+async function serviceRoute(ctx: Ctx, sub: string, method: string, body: any) {
+  if (sub === "" && method === "POST") updateService(body);
+  else if (sub === "/roots" && method === "POST") {
+    const roots = ctx.registry.roots;
+    const add = typeof body.add === "string" && body.add.trim() ? resolve(body.add.trim()) : undefined;
+    if (add && !existsSync(add)) throw new Error(`${add} does not exist`);
+    if (add && !statSync(add).isDirectory()) throw new Error(`${add} is not a folder`);
+    const drop = typeof body.remove === "string" ? body.remove.toLowerCase() : undefined;
+    ctx.registry.setRoots([...roots.filter((r) => r.toLowerCase() !== drop), ...(add ? [add] : [])]);
+  } else if (sub === "/trim" && method === "POST") {
+    const r = ctx.renderer.evict(body.all ? 0 : undefined);
+    return { ...serviceState(ctx), trimmed: r };
+  }
+  return serviceState(ctx);
 }

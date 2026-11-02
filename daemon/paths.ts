@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync, renameSync, readFileSync, existsSync } from "
 import { dirname, join, basename, extname, resolve } from "node:path";
 import { createHash } from "node:crypto";
 
-export const APP_DIR = join(process.env.LOCALAPPDATA ?? join(process.env.USERPROFILE ?? ".", "AppData", "Local"), "Dailies");
+export const APP_DIR = process.env.DAILIES_HOME ? resolve(process.env.DAILIES_HOME) : join(process.env.LOCALAPPDATA ?? join(process.env.USERPROFILE ?? ".", "AppData", "Local"), "Dailies");
 export const CACHE_DIR = join(APP_DIR, "cache");
 export const VIDEO_CACHE = join(CACHE_DIR, "v");
 export const AUDIO_CACHE = join(CACHE_DIR, "a");
@@ -16,6 +16,7 @@ export const BIN_DIR = join(APP_DIR, "bin");
 export const DAEMON_FILE = join(APP_DIR, "daemon.json");
 export const REGISTRY_FILE = join(APP_DIR, "registry.json");
 export const DEFAULT_PORT = 47800;
+export const HOME_ID = createHash("sha1").update(APP_DIR.toLowerCase()).digest("hex").slice(0, 12);
 
 for (const d of [APP_DIR, VIDEO_CACHE, AUDIO_CACHE, MOVIE_CACHE, SLATE_CACHE, FRAME_CACHE, THUMB_CACHE, POSTER_CACHE, JOB_DIR, BIN_DIR]) mkdirSync(d, { recursive: true });
 

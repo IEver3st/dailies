@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { Library, type OpenTarget } from "./components/Library";
 import { Review } from "./components/Review";
 import { connection } from "./lib/api";
+import { SettingsHost } from "./components/Settings";
+import { SetupHost } from "./components/Setup";
 
 export function App() {
   const [target, setTarget] = useState<OpenTarget | undefined>(() => {
@@ -30,5 +32,11 @@ export function App() {
     );
   }
   if (!ready) return <div className="drag h-12" />;
-  return target ? <Review key={`${target.cutId}-${target.rev}-${target.t}`} cutId={target.cutId} start={target} onBack={() => setTarget(undefined)} /> : <Library onOpen={setTarget} />;
+  return (
+    <>
+      {target ? <Review key={`${target.cutId}-${target.rev}-${target.t}`} cutId={target.cutId} start={target} onBack={() => setTarget(undefined)} /> : <Library onOpen={setTarget} />}
+      <SettingsHost />
+      <SetupHost />
+    </>
+  );
 }

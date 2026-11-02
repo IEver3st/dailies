@@ -1,11 +1,10 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import type { Annotation } from "@/lib/api";
+import { activeAccent } from "@/lib/theme";
 
 export type Tool = "rect" | "arrow" | "pen" | "pin";
 
-const AMBER = "#ffb238";
-
-function Shape({ a, w, h, color = AMBER, faded }: { a: Annotation; w: number; h: number; color?: string; faded?: boolean }) {
+function Shape({ a, w, h, color = "var(--color-amber)", faded }: { a: Annotation; w: number; h: number; color?: string; faded?: boolean }) {
   const sw = 3;
   const common = { stroke: color, strokeWidth: sw, fill: "none", strokeLinecap: "round" as const, strokeLinejoin: "round" as const, opacity: faded ? 0.55 : 1 };
   if (a.kind === "rect") return <rect x={a.x * w} y={a.y * h} width={a.w * w} height={a.h * h} rx={6} {...common} />;
@@ -16,7 +15,7 @@ function Shape({ a, w, h, color = AMBER, faded }: { a: Annotation; w: number; h:
     return (
       <g opacity={faded ? 0.55 : 1}>
         <circle cx={cx} cy={cy} r={11} fill={color} stroke="rgba(0,0,0,.35)" strokeWidth={1} />
-        <circle cx={cx} cy={cy} r={3.5} fill="#241703" />
+        <circle cx={cx} cy={cy} r={3.5} fill="var(--color-amber-ink)" />
       </g>
     );
   }
@@ -102,8 +101,9 @@ export function Sketch({ tool, pending, shown, onAdd }: { tool?: Tool; pending: 
 
 export function drawAnnotations(ctx: CanvasRenderingContext2D, list: Annotation[], w: number, h: number) {
   const scale = Math.max(1, w / 540);
-  ctx.strokeStyle = AMBER;
-  ctx.fillStyle = AMBER;
+  const accent = activeAccent();
+  ctx.strokeStyle = accent.fill;
+  ctx.fillStyle = accent.fill;
   ctx.lineWidth = 3 * scale;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";

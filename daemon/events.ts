@@ -7,7 +7,12 @@ export type DailiesEvent =
   | { type: "notes"; cutId: string; noteId?: string }
   | { type: "activity"; cutId: string }
   | { type: "mix"; cutId: string; rev: number }
-  | { type: "focus"; cutId: string; t?: number; noteId?: string };
+  | { type: "export"; cutId: string; cut: string; rev: number; state: "queued" | "running" | "done" | "failed" | "cancelled"; progress: number; phase: string; file?: string; bytes?: number; error?: string }
+  | { type: "focus"; cutId: string; t?: number; noteId?: string }
+  | { type: "agent"; cutId: string; cut: string; name: string; state: string; text: string }
+  | { type: "library" }
+  | { type: "service" }
+  | { type: "setup" };
 
 type Listener = (e: DailiesEvent) => void;
 const listeners = new Set<Listener>();

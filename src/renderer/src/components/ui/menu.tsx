@@ -15,7 +15,7 @@ export function MenuContent({ children, align = "end" }: { children: ReactNode; 
   );
 }
 
-export function MenuItem({ children, onSelect, danger, disabled }: { children: ReactNode; onSelect?: () => void; danger?: boolean; disabled?: boolean }) {
+export function MenuItem({ children, onSelect, danger, disabled }: { children: ReactNode; onSelect?: (e: Event) => void; danger?: boolean; disabled?: boolean }) {
   return (
     <D.Item
       disabled={disabled}

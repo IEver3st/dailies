@@ -26,6 +26,7 @@ export class PlayerController {
   private cmpFrame?: { now: number; media: number };
   private cmpAhead = 0;
   onTime?: (ms: number) => void;
+  private loopAll = false;
 
   subscribe = (fn: () => void) => {
     this.subs.add(fn);
@@ -61,6 +62,7 @@ export class PlayerController {
     this.video = v;
     this.queuedSeek = undefined;
     v.playbackRate = this.state.rate;
+    v.loop = this.loopAll;
     this.applyAudio(v);
     v.onplay = () => this.set({ playing: true });
     v.onpause = () => {
@@ -186,6 +188,10 @@ export class PlayerController {
   nudgeVolume(delta: number) {
     if (this.state.muted && delta < 0) return;
     this.setVolume(this.state.volume + delta);
+  }
+  setLoopAll(on: boolean) {
+    this.loopAll = on;
+    if (this.video) this.video.loop = on;
   }
   setLoop(loop: PlayerState["loop"]) {
     this.set({ loop });

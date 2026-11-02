@@ -52,6 +52,7 @@ export type RevisionInfo = {
   movieKey?: string;
   published: boolean;
   restorable: boolean;
+  exportable?: boolean;
 };
 export type TrackItem = {
   id: number;
@@ -71,7 +72,7 @@ export type Activity = {
   id: string;
   at: string;
   author: Author;
-  kind: "status" | "revision" | "note" | "reply" | "publish" | "approve" | "edit" | "render" | "open";
+  kind: "status" | "revision" | "note" | "reply" | "publish" | "approve" | "edit" | "render" | "export" | "open";
   state?: "working" | "ready" | "blocked" | "idle";
   text: string;
   rev?: number;
@@ -92,6 +93,23 @@ export type CutSummary = {
   render: { ready: number; total: number; rendering: boolean; failed: number };
   missing?: boolean;
 };
+export type ExportRecord = { id: string; rev: number; file: string; at: string; bytes: number; ms: number; encoder: string; width?: number; height?: number; exists: boolean };
+export type ExportJob = {
+  id: string;
+  rev: number;
+  phase: "waiting" | "starting" | "rendering" | "finishing";
+  ahead: number;
+  progress: number;
+  completed: number;
+  total: number;
+  rate?: number;
+  etaMs?: number;
+  reportedAt?: number;
+  startedAt?: number;
+  queuedAt: number;
+  file?: string;
+};
+export type ExportState = { profile: string; ready: { ok: boolean; reason?: string }; job?: ExportJob; failure?: { rev: number; error: string; at: string }; history: ExportRecord[] };
 export type Collaborator = { thread: string; agent: string; at: string; link?: string };
 export type CutDetail = CutSummary & {
   rev?: number;
@@ -102,6 +120,7 @@ export type CutDetail = CutSummary & {
   movie?: { rev: number; key: string; stale: number[]; missing: number[]; complete: boolean };
   jobs: { id: string; rev: number; from: number; to: number; state: string; progress?: number }[];
   renderError?: string;
+  export?: ExportState;
   notes: Note[];
   activity: Activity[];
   collaborators: Collaborator[];
@@ -109,6 +128,21 @@ export type CutDetail = CutSummary & {
 export type LibraryFile = { path: string; name: string; folder: string; size: number; mtimeMs: number; registered?: boolean; id?: string; durationMs?: number; width?: number; height?: number; group?: string; poster?: boolean };
 export type ActivityItem = Activity & { cutId: string; cut: string };
 export type DailiesEvent = { type: string; cutId?: string; [k: string]: unknown };
+export type AgentClient = { id: string; name: string; version?: string; t3?: boolean; firstAt: string; lastAt: string };
+export type SetupState = {
+  owner?: string;
+  onboardedAt?: string;
+  tsrct: { found: boolean; path?: string; version?: string; wanted: string };
+  ffmpeg: { found: boolean; path?: string; version?: string; encoder: string };
+  bun: { path: string; version: string };
+  mcp: { entry: string; exists: boolean };
+  release?: { short: string; subject: string };
+  t3: boolean;
+  appDir: string;
+  repo: string;
+  roots: string[];
+  clients: AgentClient[];
+};
 
 let conn: Promise<{ base: string; token: string }> | undefined;
 let known: { base: string; token: string } | undefined;
@@ -134,7 +168,11 @@ export function media(path: string) {
 
 export class ApiError extends Error {}
 
-export async function api<T = any>(path: string, init?: { method?: string; body?: unknown; signal?: AbortSignal }): Promise<T> {
+function reconnect() {
+  if (window.dailies) conn = undefined;
+}
+
+export async function api<T = any>(path: string, init?: { method?: string; body?: unknown; signal?: AbortSignal }, retry = true): Promise<T> {
   const { base, token } = await connection();
   const r = await fetch(base + path, {
     method: init?.method ?? (init?.body ? "POST" : "GET"),
@@ -142,6 +180,10 @@ export async function api<T = any>(path: string, init?: { method?: string; body?
     body: init?.body ? JSON.stringify(init.body) : undefined,
     signal: init?.signal,
   });
+  if (r.status === 401 && retry && window.dailies) {
+    reconnect();
+    return api<T>(path, init, false);
+  }
   const text = await r.text();
   const data = text ? JSON.parse(text) : {};
   if (!r.ok) throw new ApiError(data.error ?? `Request failed (${r.status})`);
@@ -165,6 +207,7 @@ export function onEvent(fn: Listener) {
 
 async function openStream() {
   const { base, token } = await connection();
+  if (source) return;
   source = new EventSource(`${base}/api/events?token=${token}`);
   source.onmessage = (m) => {
     const e = JSON.parse(m.data) as DailiesEvent;
@@ -173,6 +216,7 @@ async function openStream() {
   source.onerror = () => {
     source?.close();
     source = undefined;
+    reconnect();
     setTimeout(() => {
       if (listeners.size) {
         void openStream();

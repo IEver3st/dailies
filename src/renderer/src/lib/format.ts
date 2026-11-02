@@ -38,3 +38,5 @@ export function dbOf(volume: number | undefined) {
   if (volume <= 0) return -60;
   return 20 * Math.log10(volume);
 }
+
+export const megabytes = (bytes: number) => (bytes >= 1e9 ? `${(bytes / 1e9).toFixed(2)} GB` : `${Math.max(1, Math.round(bytes / 1e6))} MB`);

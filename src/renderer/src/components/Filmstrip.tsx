@@ -216,7 +216,7 @@ export function Filmstrip({
                       title={`${it.name}\n${tc(start)} to ${tc(end)}`}
                       className={cn(
                         "absolute flex h-4 items-center overflow-hidden rounded-[4px] px-1.5 text-[11px] leading-none whitespace-nowrap",
-                        lane.key === "text" ? "bg-text text-ink" : lane.key === "picture" ? "bg-[#2a4245] text-[#cfe0dd]" : lane.key === "graphics" ? "bg-[#233a3d] text-soft" : "bg-[#1d3134] text-dim",
+                        lane.key === "text" ? "bg-text text-ink" : lane.key === "picture" ? "bg-lane-picture text-lane-picture-text" : lane.key === "graphics" ? "bg-lane-graphics text-soft" : "bg-lane-other text-dim",
                         it.hidden && "opacity-40",
                         sel && "shadow-[0_0_0_2px_var(--color-amber)]",
                         sel && it.editable.timing ? "cursor-grab" : "cursor-pointer",
@@ -250,7 +250,7 @@ export function Filmstrip({
             className={cn(
               "pointer-events-auto absolute top-[32px] grid size-[18px] -translate-x-1/2 place-items-center rounded-full text-[10.5px] font-bold",
               n.status === "draft" ? "bg-well text-amber shadow-[inset_0_0_0_2px_var(--color-amber)]" : n.status === "resolved" || n.status === "addressed" || n.status === "wontfix" ? "bg-raised text-soft" : "bg-amber text-amber-ink",
-              selectedNote === n.id && "ring-2 ring-white",
+              selectedNote === n.id && "ring-2 ring-playhead",
             )}
             style={{ left: pct(n.displayT) }}
           >
@@ -266,10 +266,10 @@ function Playhead({ controller, duration, scrubbing }: { controller: PlayerContr
   const time = usePlayerSelect(controller, (s) => s.time);
   const x = (Math.min(duration, time) / duration) * 100;
   return (
-    <div className="absolute inset-y-0 w-0.5 -translate-x-1/2 bg-white shadow-[0_0_0_1px_rgba(0,0,0,.35)]" style={{ left: `${x}%` }}>
-      <div className="pointer-events-auto absolute -top-1.5 left-1/2 h-[18px] w-[11px] -translate-x-1/2 cursor-ew-resize rounded-[3px] bg-white shadow-[0_0_0_1px_rgba(0,0,0,.35)]" />
+    <div className="absolute inset-y-0 w-0.5 -translate-x-1/2 bg-playhead shadow-[0_0_0_1px_rgba(0,0,0,.35)]" style={{ left: `${x}%` }}>
+      <div className="pointer-events-auto absolute -top-1.5 left-1/2 h-[18px] w-[11px] -translate-x-1/2 cursor-ew-resize rounded-[3px] bg-playhead shadow-[0_0_0_1px_rgba(0,0,0,.35)]" />
       {scrubbing && (
-        <span className={cn("absolute -top-1.5 rounded-[4px] bg-white px-1.5 text-[11.5px] leading-[18px] font-semibold text-ink tabular-nums shadow-[0_0_0_1px_rgba(0,0,0,.35)]", x > 88 ? "right-[9px]" : "left-[9px]")}>{tc(time)}</span>
+        <span className={cn("absolute -top-1.5 rounded-[4px] bg-playhead px-1.5 text-[11.5px] leading-[18px] font-semibold text-ink tabular-nums shadow-[0_0_0_1px_rgba(0,0,0,.35)]", x > 88 ? "right-[9px]" : "left-[9px]")}>{tc(time)}</span>
       )}
     </div>
   );

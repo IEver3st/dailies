@@ -1,11 +1,12 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync, statSync, readdirSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { exportSpan, findCli } from "./tsrct";
+import { exportSpan, findCli, tryFindCli } from "./tsrct";
 import { FFMPEG, PCM_BYTES_PER_FRAME, PCM_RATE, encodeMovie, pickEncoder, readWav, run, sliceWav, splitSpan, writeBuffer, moveInto, makeSlate } from "./media";
 import { AUDIO_CACHE, BIN_DIR, FRAME_CACHE, JOB_DIR, MOVIE_CACHE, THUMB_CACHE, VIDEO_CACHE } from "./paths";
 import { SEGMENT_MS } from "./doc";
 import { emit } from "./events";
+import { cacheLimitBytes, onServiceChange, serviceSettings } from "./service";
 import type { Cut } from "./cuts";
 import { RENDER_SETTINGS } from "./cuts";
 import type { Revision, SegmentState } from "./types";
@@ -69,11 +70,18 @@ export class Renderer {
   private movies = new Map<string, Movie>();
   private assembling = new Map<string, Promise<void>>();
   private assembleAgain = new Set<string>();
-  private cli = findCli();
+  private cli = tryFindCli();
   private failures = new Map<string, { at: number; error: string }>();
-  readonly concurrency = 3;
+  concurrency = serviceSettings().renderSlots;
 
-  constructor(private cuts: () => Cut[]) {}
+  constructor(private cuts: () => Cut[]) {
+    onServiceChange((s) => {
+      const grew = s.renderSlots > this.concurrency;
+      this.concurrency = s.renderSlots;
+      if (grew) this.pump();
+      void this.evict();
+    });
+  }
 
   setPlayhead(cutId: string, t: number) {
     this.playheads.set(cutId, { t, at: Date.now() });
@@ -283,7 +291,7 @@ export class Renderer {
       const encoder = await pickEncoder();
       const fps = job.audioOnly ? 1 : RENDER_SETTINGS.fps;
       const ex = exportSpan({
-        cli: this.cli,
+        cli: this.cli ?? findCli(),
         project: source.path,
         output: join(dir, "span.mp4"),
         resolution: job.audioOnly ? "720p" : RENDER_SETTINGS.resolution,
@@ -443,7 +451,7 @@ export class Renderer {
     } catch {}
   }
 
-  evict(limitBytes = CACHE_LIMIT) {
+  evict(limitBytes = cacheLimitBytes()) {
     const pinned = new Set<string>();
     for (const c of this.cuts()) {
       for (const r of [c.latest, c.revision(c.approvedRev)]) {
@@ -485,8 +493,6 @@ export class Renderer {
     return { before, after: total, removed };
   }
 }
-
-export const CACHE_LIMIT = Number(process.env.DAILIES_CACHE_GB || 20) * 1e9;
 
 export async function taskkillTree(pid: number) {
   await run(["taskkill", "/T", "/F", "/PID", String(pid)]);

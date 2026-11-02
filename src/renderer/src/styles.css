@@ -17,6 +17,13 @@
   --color-amber-ink: #241703;
   --color-teal: #5fc9b5;
   --color-red: #ff6b5e;
+  --color-playhead: #ffffff;
+  --color-lane-picture: #2a4245;
+  --color-lane-picture-text: #cfe0dd;
+  --color-lane-graphics: #233a3d;
+  --color-lane-other: #1d3134;
+  --color-error-bg: #3a1f1c;
+  --color-error-text: #ffd2cc;
 }
 
 @layer base {
@@ -24,6 +31,9 @@
   body,
   #root {
     height: 100%;
+  }
+  :root {
+    color-scheme: dark;
   }
   body {
     margin: 0;
@@ -79,16 +89,16 @@
   }
 }
 .rendering-cell {
-  background-image: repeating-linear-gradient(135deg, rgba(255, 178, 56, 0.55) 0 6px, rgba(255, 178, 56, 0.15) 6px 14px);
+  background-image: repeating-linear-gradient(135deg, color-mix(in srgb, var(--color-amber) 55%, transparent) 0 6px, color-mix(in srgb, var(--color-amber) 15%, transparent) 6px 14px);
   background-size: 28px 100%;
   animation: render-sweep 0.9s linear infinite;
 }
 @keyframes land {
   0% {
-    box-shadow: inset 0 0 0 2px rgba(255, 178, 56, 1), 0 0 0 0 rgba(255, 178, 56, 0.55);
+    box-shadow: inset 0 0 0 2px var(--color-amber), 0 0 0 0 color-mix(in srgb, var(--color-amber) 55%, transparent);
   }
   100% {
-    box-shadow: inset 0 0 0 2px rgba(255, 178, 56, 1), 0 0 0 10px rgba(255, 178, 56, 0);
+    box-shadow: inset 0 0 0 2px var(--color-amber), 0 0 0 10px transparent;
   }
 }
 .landed {
@@ -98,5 +108,217 @@
   .rendering-cell,
   .landed {
     animation: none;
+  }
+}
+
+@keyframes settings-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes settings-rise {
+  from {
+    opacity: 0;
+    scale: 0.985;
+  }
+}
+.settings-overlay[data-state="open"] {
+  animation: settings-fade 0.16s ease-out;
+}
+.settings-panel[data-state="open"] {
+  animation: settings-rise 0.18s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-overlay[data-state="open"],
+  .settings-panel[data-state="open"] {
+    animation: none;
+  }
+}
+
+@property --rail-spin {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+@keyframes rail-spin {
+  to {
+    --rail-spin: 360deg;
+  }
+}
+@keyframes rail-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-amber) var(--rail-pulse-mix, 45%), transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 var(--rail-pulse, 9px) transparent;
+  }
+}
+@keyframes rail-swap {
+  from {
+    opacity: 0;
+    translate: 0 3px;
+  }
+}
+@keyframes rail-flash {
+  0% {
+    background: color-mix(in srgb, var(--color-amber) 16%, transparent);
+  }
+  100% {
+    background: transparent;
+  }
+}
+@keyframes rail-wave {
+  0%,
+  60%,
+  100% {
+    translate: 0 0;
+  }
+  30% {
+    translate: 0 -3px;
+  }
+}
+.rail-ring {
+  background: transparent;
+  transition: background 0.25s ease;
+}
+.rail-ring[data-tone="working"] {
+  background: conic-gradient(from var(--rail-spin), transparent 0turn, transparent 0.5turn, var(--color-teal) 1turn);
+  animation: rail-spin 1.4s linear infinite;
+}
+.rail-ring[data-tone="needs"] {
+  background: var(--color-amber);
+  animation: rail-pulse 2.2s ease-out infinite;
+}
+.rail-ring[data-tone="ready"] {
+  background: color-mix(in srgb, var(--color-teal) 55%, transparent);
+}
+.rail-dot {
+  background: var(--color-faint);
+  box-shadow: 0 0 0 2px var(--color-well);
+  transition:
+    background 0.25s ease,
+    opacity 0.25s ease;
+}
+.rail-ring[data-tone="working"] .rail-dot {
+  background: var(--color-teal);
+}
+.rail-ring[data-tone="needs"] .rail-dot {
+  background: var(--color-amber);
+}
+.rail-ring[data-tone="ready"] .rail-dot,
+.rail-ring[data-tone="idle"] .rail-dot {
+  opacity: 0;
+}
+.rail-slot {
+  width: 20px;
+  transition: width 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) var(--d, 0s);
+}
+@starting-style {
+  .rail-slot {
+    width: 0;
+  }
+}
+.rail-slot-out {
+  width: 0;
+  transition-delay: 0s;
+}
+.rail-pop {
+  scale: 1;
+  opacity: 1;
+  transition:
+    scale 0.46s cubic-bezier(0.34, 1.56, 0.64, 1) var(--d, 0s),
+    opacity 0.2s ease var(--d, 0s),
+    background-color 0.15s ease;
+}
+@starting-style {
+  .rail-pop {
+    scale: 0.3;
+    opacity: 0;
+  }
+}
+.rail-slot-out .rail-pop {
+  scale: 0.3;
+  opacity: 0;
+  transition:
+    scale 0.24s ease-in,
+    opacity 0.2s ease,
+    background-color 0.15s ease;
+}
+@keyframes rail-card {
+  from {
+    opacity: 0;
+    translate: 0 -4px;
+    scale: 0.98;
+  }
+}
+.rail-card[data-state="open"] {
+  transform-origin: var(--radix-popover-content-transform-origin);
+  animation: rail-card 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.rail-row {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  translate: 0 0;
+  transition:
+    grid-template-rows 0.26s cubic-bezier(0.2, 0.8, 0.2, 1),
+    opacity 0.26s ease,
+    translate 0.26s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@starting-style {
+  .rail-row {
+    grid-template-rows: 0fr;
+    opacity: 0;
+    translate: 0 6px;
+  }
+}
+.rail-row-out {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  translate: 10px 0;
+}
+.rail-swap {
+  animation: rail-swap 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.rail-fresh .rail-item {
+  animation: rail-flash 2s ease-out 0.2s both;
+}
+.rail-seat {
+  box-shadow: 0 0 0 2px var(--color-raised);
+  animation: rail-wave 2.6s ease-in-out infinite both;
+}
+.rail-sheet {
+  opacity: 1;
+  translate: 0 0;
+  transition:
+    opacity 0.24s ease 0.04s,
+    translate 0.36s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.rail-sheet-hidden {
+  opacity: 0;
+  translate: 28px 0;
+  transition:
+    opacity 0.16s ease,
+    translate 0.32s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.rail-grid {
+  transition: grid-template-columns 0.32s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .rail-ring[data-tone="working"],
+  .rail-ring[data-tone="needs"],
+  .rail-swap,
+  .rail-card[data-state="open"],
+  .rail-seat,
+  .rail-fresh .rail-item {
+    animation: none;
+  }
+  .rail-row,
+  .rail-slot,
+  .rail-pop,
+  .rail-slot-out .rail-pop,
+  .rail-sheet,
+  .rail-sheet-hidden,
+  .rail-grid {
+    transition: none;
   }
 }

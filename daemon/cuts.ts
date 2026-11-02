@@ -6,6 +6,7 @@ import { listZip, readZipEntry } from "./zip";
 import { analyze, diffDocs, hash, type Analysis, type AssetTable, type Doc, canonical, findLayer } from "./doc";
 import { cutDataDir, cutIdFor, normPath, readJson, writeJsonAtomic, REGISTRY_FILE } from "./paths";
 import { emit } from "./events";
+import { owner } from "./settings";
 import type { Activity, Author, CutSummary, Note, Revision } from "./types";
 
 export const RENDER_SETTINGS = { resolution: "1080p", fps: 60, segmentMs: 1000, keyframeMs: 500, version: 2, cli: "", encoder: "" };
@@ -66,6 +67,7 @@ export class Cut {
   collaborators: { thread: string; agent: string; at: string; link?: string }[] = [];
   pendingSelf?: { until: number; summary: string; size: number; mtimeMs: number };
   lastAgentTouch?: { name: string; at: number; summary?: string; addresses?: string[]; publishing?: boolean };
+  readonly pinned = new Set<number>();
   private docs = new Map<number, { doc: Doc; assets: AssetTable }>();
   private analyses = new Map<number, Analysis>();
   private watcher?: FSWatcher;
@@ -399,7 +401,7 @@ export class Cut {
     let reason = "there is no revision yet";
     for (const x of [...this.revisions].reverse()) {
       if (x.author.kind === "you") {
-        reason = `r${x.n} is Manuel's own edit and nothing of yours is unpublished before it`;
+        reason = `r${x.n} is ${owner("the user")}'s own edit and nothing of yours is unpublished before it`;
         continue;
       }
       if (x.published) {
@@ -474,6 +476,7 @@ export class Cut {
       bytes += size;
     }
     if (this.approvedRev !== undefined) keep.add(this.approvedRev);
+    for (const n of this.pinned) keep.add(n);
     const referenced = new Set(this.revisions.map((r) => r.snapshot?.toLowerCase()).filter(Boolean));
     let files: string[] = [];
     try {
@@ -615,6 +618,13 @@ export class Registry {
 
   get(idOrPath: string): Cut | undefined {
     return this.cuts.get(idOrPath) ?? this.cuts.get(cutIdFor(idOrPath));
+  }
+
+  setRoots(roots: string[]) {
+    const seen = new Set<string>();
+    this.roots = roots.map(normPath).filter((r) => !seen.has(r.toLowerCase()) && seen.add(r.toLowerCase()));
+    this.save();
+    emit({ type: "library" });
   }
 
   scanLibrary(): { path: string; folder: string; name: string; mtimeMs: number; size: number; registered: boolean }[] {

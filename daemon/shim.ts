@@ -5,6 +5,7 @@ const ffmpeg = process.env.DAILIES_FFMPEG || "ffmpeg";
 const jobDir = process.env.DAILIES_JOB;
 const encoder = process.env.DAILIES_ENCODER || "libx264";
 const gop = Number(process.env.DAILIES_GOP || "60");
+const deliverable = process.env.DAILIES_EXPORT === "1";
 
 function rewriteEncode(args: string[]): string[] {
   const out: string[] = [];
@@ -33,16 +34,47 @@ function rewriteEncode(args: string[]): string[] {
   return out;
 }
 
+function rewriteDeliverable(args: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "-c:v" && args[i + 1] === "libx264") {
+      i++;
+      if (encoder === "h264_amf") {
+        out.push("-c:v", "h264_amf", "-usage", "transcoding", "-quality", "quality", "-profile:v", "high", "-rc", "cqp", "-qp_i", "16", "-qp_p", "18", "-qp_b", "20", "-bf", "2");
+      } else {
+        out.push("-c:v", "libx264", "-preset", "slow", "-crf", "16", "-profile:v", "high");
+      }
+      continue;
+    }
+    if (a === "-b:v") {
+      i++;
+      continue;
+    }
+    if (a === "-g") {
+      out.push("-g", String(Number(args[i + 1]) * 2 || 120));
+      i++;
+      continue;
+    }
+    out.push(a);
+  }
+  return out;
+}
+
+function rewriteMux(args: string[]): string[] {
+  return args.map((a, i) => (args[i - 1] === "-b:a" ? "320k" : a));
+}
+
 const args = process.argv.slice(2);
 const isEncode = args.includes("rawvideo") && args.includes("pipe:0");
 const wav = args.find((a) => a.toLowerCase().endsWith(".wav"));
-const finalArgs = isEncode ? rewriteEncode(args) : args;
+const finalArgs = deliverable ? (isEncode ? rewriteDeliverable(args) : rewriteMux(args)) : isEncode ? rewriteEncode(args) : args;
 
 if (jobDir) {
   try {
     mkdirSync(jobDir, { recursive: true });
     appendFileSync(join(jobDir, "shim.log"), JSON.stringify(finalArgs) + "\n");
-    if (!isEncode && wav) copyFileSync(wav, join(jobDir, "audio.wav"));
+    if (!deliverable && !isEncode && wav) copyFileSync(wav, join(jobDir, "audio.wav"));
   } catch (e) {
     appendFileSync(join(jobDir, "shim.log"), `error ${String(e)}\n`);
   }

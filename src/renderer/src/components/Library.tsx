@@ -1,11 +1,17 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ArrowLeft, Check, Film, FolderOpen, Search, X } from "lucide-react";
-import { api, media, type ActivityItem, type CutSummary, type LibraryFile } from "@/lib/api";
+import { ArrowLeft, Check, FolderOpen, Search, Settings as Gear, X } from "lucide-react";
+import { api, media, type CutSummary, type LibraryFile } from "@/lib/api";
 import { useActivity, useCuts } from "@/lib/store";
 import { ago, cn, plural, tc } from "@/lib/format";
 import { Button, IconButton, Tip } from "./ui/button";
+import { Img, Blank } from "./ui/img";
+import { Heading } from "./ui/heading";
+import { AgentsPresence, Rail, togglePanel, usePanelShown } from "./Rail";
+import { awaitingReview, cutPoster, isWorking, needsYou } from "@/lib/cuts";
 import { Mark } from "./Mark";
 import { UpdatePill } from "./UpdatePill";
+import { openSettings } from "./Settings";
+import { usePreference } from "@/lib/preferences";
 
 export type OpenTarget = {
   cutId: string;
@@ -14,13 +20,8 @@ export type OpenTarget = {
   tab?: string;
 };
 
-const WORKING_MS = 15 * 60_000;
 const STRIP_MAX = 24;
 const STACK_MIN = 10;
-
-const isWorking = (c: CutSummary) => c.agent?.state === "working" && Date.now() - Date.parse(c.agent.at) < WORKING_MS;
-const awaitingReview = (c: CutSummary) => !!c.latest && c.latest.author.kind === "agent" && c.approvedRev !== c.latest.n;
-const needsYou = (c: CutSummary) => !c.missing && !isWorking(c) && (c.agent?.state === "blocked" || c.draftNotes > 0 || awaitingReview(c));
 
 function short(ms: number) {
   const s = Math.max(0, Math.round(ms / 1000));
@@ -92,36 +93,6 @@ function useWidth<T extends HTMLElement>() {
   return [ref, width] as const;
 }
 
-function Img({ src, className }: { src?: string; className?: string }) {
-  const [state, setState] = useState<"loading" | "ok" | "failed">("loading");
-  useEffect(() => setState("loading"), [src]);
-  if (!src || state === "failed") return null;
-  return (
-    <img
-      src={src}
-      loading="lazy"
-      decoding="async"
-      draggable={false}
-      onLoad={() => setState("ok")}
-      onError={() => setState("failed")}
-      className={cn("absolute inset-0 size-full object-cover transition-opacity duration-200", state === "ok" ? "opacity-100" : "opacity-0", className)}
-    />
-  );
-}
-
-function Blank() {
-  return (
-    <div className="absolute inset-0 grid place-items-center text-faint">
-      <Film className="size-5" strokeWidth={1.6} />
-    </div>
-  );
-}
-
-function cutPoster(c: CutSummary) {
-  if (!c.latest) return undefined;
-  return media(`/api/cuts/${c.id}/poster?rev=${c.latest.n}${c.render.rendering ? `&r=${c.render.ready}` : ""}`);
-}
-
 function Strip({ cut, maxH, onSeek }: { cut: CutSummary; maxH: number; onSeek: (ms: number) => void }) {
   const l = cut.latest!;
   const total = Math.max(1, l.segments);
@@ -137,7 +108,12 @@ function Strip({ cut, maxH, onSeek }: { cut: CutSummary; maxH: number; onSeek: (
   });
   const retry = cut.render.rendering ? `&r=${cut.render.ready}` : "";
   return (
-    <div className="grid gap-[3px]" style={{ gridTemplateColumns: `repeat(${n}, minmax(0, ${Math.round((maxH * l.width) / l.height)}px))` }}>
+    <div
+      className="grid gap-[3px]"
+      style={{
+        gridTemplateColumns: `repeat(${n}, minmax(0, ${Math.round((maxH * l.width) / l.height)}px))`,
+      }}
+    >
       {cells.map((c) => (
         <button
           key={c.s}
@@ -151,6 +127,31 @@ function Strip({ cut, maxH, onSeek }: { cut: CutSummary; maxH: number; onSeek: (
         </button>
       ))}
     </div>
+  );
+}
+
+function RemoveButton({ onRemove, className }: { onRemove: () => void; className?: string }) {
+  const confirm = usePreference("confirmRemove");
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!armed) return;
+    const t = setTimeout(() => setArmed(false), 3000);
+    return () => clearTimeout(t);
+  }, [armed]);
+  if (armed)
+    return (
+      <button onClick={onRemove} onBlur={() => setArmed(false)} autoFocus className={cn("no-drag h-7 rounded-lg bg-raised px-2.5 text-[12.5px] font-semibold text-red hover:bg-hover", className)}>
+        Remove
+      </button>
+    );
+  return (
+    <IconButton
+      label="Remove from Dailies"
+      onClick={() => (confirm ? setArmed(true) : onRemove())}
+      className={cn("size-7 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [&_svg]:size-4", className)}
+    >
+      <X />
+    </IconButton>
   );
 }
 
@@ -228,9 +229,7 @@ function InboxCard({ cut, wide, onOpen, onRemove, onApproved }: { cut: CutSummar
           <span className="pt-1 text-[13px] whitespace-nowrap text-faint">
             {tc(l.durationMs)}, {aspectLabel(l.width, l.height)}
           </span>
-          <IconButton label="Remove from Dailies" onClick={onRemove} className="-mt-0.5 -mr-1.5 size-7 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [&_svg]:size-4">
-            <X />
-          </IconButton>
+          <RemoveButton onRemove={onRemove} className="-mt-0.5 -mr-1.5" />
         </div>
         <AgentLine cut={cut} />
         {body && <p className="mt-1.5 max-w-[78ch] text-[14px] leading-snug text-soft">{body}</p>}
@@ -375,142 +374,13 @@ function Wall({ items, busy, onPick, onRemove }: { items: WallItem[]; busy?: str
                   <div className="mt-2 text-[13.5px] leading-snug font-medium [overflow-wrap:anywhere] text-text">{it.name}</div>
                   <div className={cn("text-[12.5px] leading-snug", meta.tone)}>{meta.text}</div>
                 </button>
-                {it.cut && (
-                  <IconButton
-                    label="Remove from Dailies"
-                    onClick={() => onRemove(it.cut!)}
-                    className="absolute top-1.5 right-1.5 size-7 bg-ink/80 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [&_svg]:size-4"
-                  >
-                    <X />
-                  </IconButton>
-                )}
+                {it.cut && <RemoveButton onRemove={() => onRemove(it.cut!)} className="absolute top-1.5 right-1.5 bg-ink/80" />}
               </div>
             );
           })}
         </div>
       ))}
     </div>
-  );
-}
-
-function phrase(a: ActivityItem): { verb: string; body?: string } {
-  const t = a.text.trim();
-  const lower = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
-  if (a.author.kind === "unknown") return { verb: lower(t) };
-  if (a.kind === "revision") return { verb: `saved r${a.rev}`, body: t };
-  if (a.kind === "approve") return { verb: `approved r${a.rev}` };
-  if (a.kind === "open") return { verb: "opened this cut" };
-  if (a.kind === "publish") {
-    const m = /^Published r\d+(?::\s*([\s\S]*))?$/.exec(t);
-    return m ? { verb: `published r${a.rev}`, body: m[1] } : { verb: lower(t) };
-  }
-  if (a.kind === "edit") {
-    const m = /^(Edited|Queued for ([^:]+)|Applied|Undid):\s*([\s\S]*)$/.exec(t);
-    if (!m) return { verb: lower(t) };
-    const verb = m[1] === "Edited" ? "edited" : m[2] ? `queued an edit for ${m[2]}` : m[1] === "Applied" ? "applied a queued edit" : "undid an edit";
-    return { verb, body: m[3] };
-  }
-  if (a.kind === "reply") {
-    const m = /^(Resolved|Reopened|Open|Working on it|Addressed|Won't fix|Draft):\s*([\s\S]*)$/.exec(t);
-    const verbs: Record<string, string> = {
-      Resolved: "resolved a note",
-      Reopened: "reopened a note",
-      Open: "reopened a note",
-      "Working on it": "took a note",
-      Addressed: "addressed a note",
-      "Won't fix": "won't fix a note",
-      Draft: "replied to a note",
-    };
-    return m ? { verb: verbs[m[1]], body: m[2] } : { verb: "replied to a note", body: t };
-  }
-  if (a.kind === "status") {
-    const verb = a.state === "blocked" ? "needs you" : a.state === "ready" ? "is ready" : a.state === "idle" ? "went idle" : "is working";
-    return { verb, body: t && t !== a.state ? t : undefined };
-  }
-  if (a.kind === "note") return { verb: "left a note", body: t };
-  return { verb: lower(t) };
-}
-
-function collapse(items: ActivityItem[]) {
-  const out: ActivityItem[] = [];
-  for (const a of items) {
-    const prev = out.at(-1);
-    if (prev && a.kind === "status" && prev.kind === "status" && prev.cutId === a.cutId && prev.author.name === a.author.name) continue;
-    if (a.kind === "render") continue;
-    out.push(a);
-  }
-  return out;
-}
-
-function agentState(c: CutSummary): { dot: string; text: string } {
-  const a = c.agent!;
-  if (isWorking(c)) return { dot: "bg-teal animate-pulse", text: a.text || "Working" };
-  if (a.state === "blocked") return { dot: "bg-amber", text: `Needs you: ${a.text}` };
-  if (awaitingReview(c))
-    return {
-      dot: "bg-amber",
-      text: `Published r${c.latest!.n}, waiting on you`,
-    };
-  if (c.approvedRev && c.approvedRev === c.latest?.n) return { dot: "bg-faint", text: `r${c.approvedRev} approved` };
-  return { dot: "bg-faint", text: `Last seen ${ago(a.at)}` };
-}
-
-function Rail({ cuts, activity, onOpen }: { cuts: CutSummary[]; activity: ActivityItem[]; onOpen: (t: OpenTarget) => void }) {
-  const agents = cuts.filter((c) => c.agent).sort((a, b) => b.agent!.at.localeCompare(a.agent!.at));
-  const feed = collapse(activity).slice(0, 40);
-  const many = new Set(feed.map((a) => a.cutId)).size > 1;
-  return (
-    <aside className="hidden min-h-0 flex-col overflow-y-auto border-l border-line bg-well px-3 pt-4 pb-8 lg:flex">
-      <Heading count={agents.length || undefined} className="px-2.5">
-        Agents
-      </Heading>
-      <div className="mt-2 grid gap-0.5">
-        {agents.length === 0 && <p className="px-2.5 text-[13.5px] text-dim">Agents show up here when they open a cut with dailies_open.</p>}
-        {agents.map((c) => {
-          const s = agentState(c);
-          return (
-            <button key={c.id} onClick={() => onOpen({ cutId: c.id })} className="grid grid-cols-[7px_minmax(0,1fr)] gap-x-3 rounded-lg px-2.5 py-2 text-left hover:bg-panel">
-              <i className={cn("mt-[7px] size-[7px] rounded-full", s.dot)} />
-              <div className="min-w-0">
-                <div className="[overflow-wrap:anywhere]">
-                  <b className="font-semibold">{c.agent!.name}</b> <span className="text-dim">on {c.name}</span>
-                </div>
-                <div className="text-[13px] leading-snug text-soft [overflow-wrap:anywhere]">{s.text}</div>
-              </div>
-            </button>
-          );
-        })}
-      </div>
-      <Heading className="mt-6 px-2.5">Activity</Heading>
-      <div className="mt-2 grid gap-0.5">
-        {feed.length === 0 && <p className="px-2.5 text-[13.5px] text-dim">Revisions, notes and approvals across your cuts land here.</p>}
-        {feed.map((a, i) => {
-          const p = phrase(a);
-          const label = many && feed[i - 1]?.cutId !== a.cutId;
-          return (
-            <div key={`${a.cutId}-${a.id}`} className="contents">
-              {label && <div className={cn("px-2.5 pb-0.5 text-[12px] font-medium text-faint [overflow-wrap:anywhere]", i > 0 && "mt-3")}>{a.cut}</div>}
-              <button onClick={() => onOpen({ cutId: a.cutId, tab: a.noteId ? "cues" : undefined })} className="rounded-lg px-2.5 py-2 text-left hover:bg-panel">
-                <div className="text-[13.5px] leading-snug [overflow-wrap:anywhere]">
-                  <b className={cn("font-semibold", a.author.kind === "agent" ? "text-teal" : a.author.kind === "you" ? "text-amber" : "text-text")}>{a.author.name}</b>{" "}
-                  <span className="text-soft">{p.verb}</span> <span className="text-[12px] whitespace-nowrap text-faint">{ago(a.at)}</span>
-                </div>
-                {p.body && <div className="mt-0.5 text-[13px] leading-snug text-dim [overflow-wrap:anywhere]">{p.body}</div>}
-              </button>
-            </div>
-          );
-        })}
-      </div>
-    </aside>
-  );
-}
-
-function Heading({ children, count, className }: { children: ReactNode; count?: number; className?: string }) {
-  return (
-    <h2 className={cn("flex items-baseline gap-2.5 text-[15px] font-semibold", className)}>
-      {children}
-      {count !== undefined && <span className="text-[13px] font-medium text-faint">{count}</span>}
-    </h2>
   );
 }
 
@@ -532,6 +402,10 @@ export function Library({ onOpen }: { onOpen: (t: OpenTarget) => void }) {
         search.current?.focus();
         search.current?.select();
       }
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        togglePanel();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => {
@@ -548,7 +422,11 @@ export function Library({ onOpen }: { onOpen: (t: OpenTarget) => void }) {
       (cuts ?? []).map((c) => ({
         ...c,
         recent: c.recent ?? [],
-        latest: c.latest && { ...c.latest, changed: c.latest.changed ?? [], segments: c.latest.segments ?? Math.max(1, Math.ceil(c.latest.durationMs / 1000)) },
+        latest: c.latest && {
+          ...c.latest,
+          changed: c.latest.changed ?? [],
+          segments: c.latest.segments ?? Math.max(1, Math.ceil(c.latest.durationMs / 1000)),
+        },
       })),
     [cuts],
   );
@@ -629,6 +507,7 @@ export function Library({ onOpen }: { onOpen: (t: OpenTarget) => void }) {
     void refreshLibrary();
   }
 
+  const panel = usePanelShown(all, activity);
   const nothing = cuts && cuts.length === 0 && library.length === 0;
 
   return (
@@ -663,8 +542,12 @@ export function Library({ onOpen }: { onOpen: (t: OpenTarget) => void }) {
           <FolderOpen className="size-4" />
           Open project
         </Button>
+        <AgentsPresence cuts={all} activity={activity} />
+        <IconButton label="Settings" keys="Ctrl ," side="bottom" onClick={() => openSettings()}>
+          <Gear />
+        </IconButton>
       </header>
-      <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px] 2xl:grid-cols-[minmax(0,1fr)_400px]">
+      <div className={cn("rail-grid grid min-h-0 flex-1 grid-cols-1 [--rail-open:340px] 2xl:[--rail-open:380px]", panel ? "lg:grid-cols-[minmax(0,1fr)_var(--rail-open)]" : "lg:grid-cols-[minmax(0,1fr)_0px]")}>
         <main className="min-h-0 overflow-y-auto px-7 pt-3 pb-12">
           {error && <div className="mb-4 rounded-lg bg-panel px-4 py-3 text-red">{error}</div>}
           {openError && <div className="mb-4 rounded-lg bg-panel px-4 py-3 text-red">{openError}</div>}
