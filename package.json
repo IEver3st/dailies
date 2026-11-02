@@ -1,0 +1,47 @@
+{
+  "name": "dailies",
+  "productName": "Dailies",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Review room for agent-made Tesseract videos",
+  "main": "out/main/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "daemon": "bun daemon/main.ts",
+    "mcp": "bun mcp/server.ts",
+    "install:windows": "bun run build && bun scripts/install-windows.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@fontsource-variable/familjen-grotesk": "^5.3.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.66.0",
+    "radix-ui": "^1.8.1",
+    "react": "19",
+    "react-dom": "19",
+    "tailwind-merge": "^3.7.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4",
+    "@types/bun": "^1.4.4",
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "5",
+    "electron": "44",
+    "electron-vite": "5",
+    "resedit": "^1.7.2",
+    "tailwindcss": "4",
+    "typescript": "5.9",
+    "vite": "7"
+  },
+  "trustedDependencies": [
+    "electron",
+    "esbuild"
+  ]
+}
