@@ -16,7 +16,7 @@ The Dailies MCP server for Claude Code and Codex runs `%LOCALAPPDATA%\Dailies\mc
 
 ## Setup and sharing
 
-**Connect agent** in the Library header (it also opens on first launch) shows what Dailies sees on this PC, asks the reviewer's name and gives a prompt that connects Claude Code, Codex or T3 Code to Dailies. **Copy invite prompt** gives a prompt for someone else's Windows PC: their agent installs Git, Bun, ffmpeg and the Tesseract CLI, clones this repo, runs the installer and connects itself. They need read access to the repo.
+**Connect agent** in the Library header (it also opens on first launch) shows what Dailies sees on this PC, asks the reviewer's name and gives a prompt that connects Claude Code, Codex or T3 Code to Dailies. **Copy invite prompt** gives a prompt for someone else's Windows PC: their agent installs Git, Bun, ffmpeg and the Tesseract CLI, clones this repo, runs the installer and connects itself. The repo is public, so it needs no access from you.
 
 `bun "%LOCALAPPDATA%\Dailies\mcp.mjs" --check [--owner <name>]` runs the same check from a shell and reports how to fix anything missing. The reviewer's name is stored in `%LOCALAPPDATA%\Dailies\settings.json`; agents see it in the MCP instructions and in note deliveries. Dailies starts without the Tesseract CLI or ffmpeg and restarts its render service once they are installed.
 
