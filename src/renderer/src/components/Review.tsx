@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronLeft, ChevronRight, Pause, Play, Repeat, Smartphone, Columns2, Maximize, FolderOpen, ExternalLink, Settings as Gear } from "lucide-react";
 import type { Annotation, CutDetail, TrackItem } from "@/lib/api";
 import { api, mediaUrl, onEvent } from "@/lib/api";
@@ -76,11 +76,13 @@ function Presence({ cut, room, inline }: { cut: CutDetail; room?: number; inline
     <div className="pointer-events-none absolute top-5 left-6 z-10 grid gap-3" style={{ maxWidth: Math.min(320, room ?? 320) }}>
       {a && (
         <div>
-          <div className="flex items-center gap-2 font-semibold">
-            {dot}
-            {a.name}
+          <div className="flex items-start gap-2 font-semibold">
+            <span className="flex h-[1lh] shrink-0 items-center">{dot}</span>
+            <span className="pointer-events-auto line-clamp-2 min-w-0 break-words" title={a.name}>
+              {a.name}
+            </span>
             {collaborator?.link && (
-              <button className="pointer-events-auto text-dim hover:text-text" aria-label="Open the agent's thread" onClick={() => void window.dailies?.openExternal(collaborator.link!)}>
+              <button className="pointer-events-auto flex h-[1lh] shrink-0 items-center text-dim hover:text-text" aria-label="Open the agent's thread" onClick={() => void window.dailies?.openExternal(collaborator.link!)}>
                 <ExternalLink className="size-3.5" />
               </button>
             )}
@@ -109,6 +111,26 @@ function Presence({ cut, room, inline }: { cut: CutDetail; room?: number; inline
 }
 
 const PRESENCE_MIN = 156;
+
+function StagePlaceholder({ onGutter, children }: { onGutter: (px: number) => void; children: ReactNode }) {
+  const box = useRef<HTMLDivElement>(null);
+  const label = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const measure = () => {
+      if (box.current && label.current) onGutter((box.current.clientWidth - label.current.offsetWidth) / 2);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    if (box.current) ro.observe(box.current);
+    if (label.current) ro.observe(label.current);
+    return () => ro.disconnect();
+  }, [onGutter]);
+  return (
+    <div ref={box} className="grid flex-1 place-items-center text-soft">
+      <span ref={label}>{children}</span>
+    </div>
+  );
+}
 
 export function Review({ cutId, start, onBack }: { cutId: string; start?: { rev?: number; t?: number; tab?: string }; onBack: () => void }) {
   const [viewRev, setViewRev] = useState<number | undefined>(start?.rev);
@@ -447,13 +469,13 @@ export function Review({ cutId, start, onBack }: { cutId: string; start?: { rev?
                 }
               />
             ) : (
-              <div className="grid flex-1 place-items-center text-soft">
+              <StagePlaceholder onGutter={setGutter}>
                 {viewRev !== undefined
                   ? `Preparing r${viewing}, ${cut.segments.filter((x) => x === "ready").length} of ${cut.segments.length} seconds rendered`
                   : cut.render.total
                     ? `Rendering the first seconds, ${cut.render.ready} of ${cut.render.total} ready`
                     : "Reading the project"}
-              </div>
+              </StagePlaceholder>
             )}
           </div>
           <div className="@container flex h-14 shrink-0 items-center gap-1 px-5">
